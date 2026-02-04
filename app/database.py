@@ -44,16 +44,24 @@ def _get_credentials():
         'https://www.googleapis.com/auth/drive'
     ]
     
-    # Tenta carregar de diferentes fontes
+    # Tenta carregar de Streamlit secrets primeiro (para cloud deploy)
+    try:
+        import streamlit as st
+        if "GOOGLE_SHEETS_CREDENTIALS" in st.secrets:
+            creds_dict = dict(st.secrets["GOOGLE_SHEETS_CREDENTIALS"])
+            return Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    except Exception:
+        pass
+    
+    # Fallback: carregar do arquivo local
     creds_path = Path(GOOGLE_SHEETS_CREDENTIALS_PATH)
     if not creds_path.is_absolute():
         creds_path = BASE_DIR / GOOGLE_SHEETS_CREDENTIALS_PATH
     
-    # Para Streamlit Cloud, as credenciais podem vir de secrets
     if creds_path.exists():
         return Credentials.from_service_account_file(str(creds_path), scopes=scopes)
     
-    # Fallback: tentar carregar de variável de ambiente (para Streamlit Cloud)
+    # Fallback: tentar carregar de variável de ambiente
     creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
     if creds_json:
         import json

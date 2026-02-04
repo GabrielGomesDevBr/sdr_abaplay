@@ -18,9 +18,19 @@ from dotenv import load_dotenv
 # Carrega variáveis de ambiente
 load_dotenv()
 
-# Configuração do modelo
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+# Configuração do modelo (suporta Streamlit secrets e .env)
+def _get_secret(key: str, default: str = "") -> str:
+    """Busca secret do Streamlit ou .env"""
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+OPENAI_API_KEY = _get_secret("OPENAI_API_KEY", "")
+OPENAI_MODEL = _get_secret("OPENAI_MODEL", "gpt-5-mini")
 
 
 def get_llm():

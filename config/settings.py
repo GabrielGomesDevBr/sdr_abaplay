@@ -8,10 +8,22 @@ from dotenv import load_dotenv
 # Carrega variáveis de ambiente
 load_dotenv()
 
+
+def _get_secret(key: str, default: str = "") -> str:
+    """Busca secret do Streamlit ou .env"""
+    try:
+        import streamlit as st
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
 # === API Configuration ===
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
-SENDER_NAME = os.getenv("SENDER_NAME", "ABAplay")
+RESEND_API_KEY = _get_secret("RESEND_API_KEY", "")
+SENDER_EMAIL = _get_secret("SENDER_EMAIL", "")
+SENDER_NAME = _get_secret("SENDER_NAME", "ABAplay")
 
 # === Email Limits ===
 DAILY_EMAIL_LIMIT = 10  # Limite inicial para warmup
@@ -36,8 +48,8 @@ DATA_DIR = BASE_DIR / "data"
 DESKTOP_PATH = Path(os.getenv("DESKTOP_PATH", Path.home() / "Área de Trabalho"))
 
 # === Google Sheets Configuration ===
-GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")
-GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json")
+GOOGLE_SHEETS_SPREADSHEET_ID = _get_secret("GOOGLE_SHEETS_SPREADSHEET_ID", "")
+GOOGLE_SHEETS_CREDENTIALS_PATH = _get_secret("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json")
 
 # === Lead Scoring Weights ===
 SCORE_EMAIL_EXISTS = 30
