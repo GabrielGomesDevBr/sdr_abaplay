@@ -1,8 +1,10 @@
 """
 Processador de leads usando LLM (OpenAI) via LangChain
+Versão 3.0 - Suporte a Leads Enriquecidos (contexto_abordagem)
+
 Responsável por:
 - Processar e enriquecer dados de leads
-- Gerar emails personalizados
+- Gerar emails hiperpersonalizados baseados em contexto
 - Calcular scores contextuais
 """
 import os
@@ -99,186 +101,529 @@ Retorne um JSON com esta estrutura exata:
 ])
 
 
-# === Prompt para geração de email personalizado v2.0 ===
-# Sistema completo com contexto profundo do mercado ABA brasileiro
-# Inclui: personas, dores específicas, framework PAS + cultura BR
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMPT PARA GERAÇÃO DE EMAIL v3.0 - SUPORTE A LEADS ENRIQUECIDOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
 EMAIL_GENERATION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Você é um especialista em copywriting B2B para o mercado de saúde brasileiro, 
-especificamente para clínicas de terapia ABA (Análise do Comportamento Aplicada) que atendem 
-crianças com TEA (Transtorno do Espectro Autista) e outros transtornos do neurodesenvolvimento.
+    ("system", """Você é um especialista em copywriting B2B para o mercado de saúde brasileiro,
+especificamente para clínicas de terapia ABA (Análise do Comportamento Aplicada).
+
+Sua tarefa é gerar emails de prospecção HIPERPERSONALIZADOS usando os dados enriquecidos do lead.
 
 ═══════════════════════════════════════════════════════════════════════════════
-SOBRE O ABAPLAY - CONHEÇA PROFUNDAMENTE O PRODUTO
+SOBRE O ABAPLAY
 ═══════════════════════════════════════════════════════════════════════════════
 
-O ABAplay é uma plataforma SaaS especializada em gestão de clínicas ABA, desenvolvida por 
-profissionais que vivem a rotina ABA (a co-fundadora é supervisora ABA com +10 anos de experiência).
+Plataforma SaaS de gestão para clínicas ABA, desenvolvida por profissionais ABA.
 
-DIFERENCIAIS ÚNICOS:
-• Biblioteca de 2.402+ programas de intervenção baseados em evidências (12 áreas: ABA, Fono, TO, Psico)
-• Gerador de PEI Escolar automático (reduz de 5h para 5min — economia de 92% do tempo)
-• 100% conforme Lei Brasileira de Inclusão (LBI) e BNCC
-• Registro de sessões visual com 6 níveis de prompt coloridos (vermelho→verde)
+ARSENAL DE BENEFÍCIOS (use conforme o contexto do lead):
+
+📊 DADOS E GRÁFICOS:
 • Gráficos de evolução automáticos por área de intervenção
-• Relatórios profissionais com 1 clique (aceitos por planos de saúde)
-• Portal dos Pais em tempo real (pais veem evolução sem pedir relatórios)
-• Chat profissional por paciente (substitui WhatsApp bagunçado)
 • Dashboard de métricas e performance da equipe
+• Verificador de progresso que detecta programas dominados
+• Dados consistentes para pesquisa e publicações científicas
 
-PROPOSTA DE VALOR CENTRAL:
-"Elimine até 90% das glosas de convênio com documentação profissional e automática. 
-Cada R$ 1 investido no ABAplay economiza R$ 10-15 em glosas evitadas."
+📝 DOCUMENTAÇÃO:
+• PEI escolar automático (5h → 5min, 92% de redução)
+• 100% conforme LBI e BNCC
+• Relatórios profissionais com 1 clique
+• Documentação aceita por auditores de convênio
+• Elimina até 90% das glosas
 
-═══════════════════════════════════════════════════════════════════════════════
-DORES ESPECÍFICAS PARA USAR NOS EMAILS (escolha 1 por email)
-═══════════════════════════════════════════════════════════════════════════════
+📱 REGISTRO E OPERAÇÃO:
+• Registro de sessões pelo celular (6 níveis de prompt coloridos)
+• 2.402+ programas baseados em evidências (ABA, Fono, TO, Psico)
+• Criação de programas personalizados da clínica
+• Sistema em nuvem — acesse de qualquer lugar
 
-DOR 1: GLOSAS DE CONVÊNIO (melhor para donas de clínica)
-├── Estatística: 5-8% do faturamento perdido = R$ 18.000-96.000/ano
-├── Impacto emocional: "Trabalho feito, dinheiro não recebido"
-├── Solução ABAplay: Relatórios padronizados aceitos por auditores
-└── Prova: "Elimine até 90% das glosas"
+👨‍👩‍👧 COMUNICAÇÃO:
+• Portal dos Pais com evolução em tempo real
+• Chat profissional por paciente (substitui WhatsApp)
+• Canal de discussão de casos para equipe
+• Histórico completo documentado
 
-DOR 2: PEI ESCOLAR DEMORADO (melhor para supervisoras)
-├── Estatística: 5+ horas por documento vs 5 minutos no ABAplay
-├── Impacto emocional: "Fim de semana perdido escrevendo PEI"
-├── Solução ABAplay: Tradução automática ABA→BNCC, 100% LBI
-└── Prova: "92% de redução no tempo de produção"
+🏢 GESTÃO MULTI-UNIDADE:
+• Prontuários centralizados para redes de clínicas
+• Padrão de qualidade unificado entre unidades
+• Supervisão remota com dados em tempo real
+• Relatórios consolidados
 
-DOR 3: REGISTRO EM FICHAS DE PAPEL (melhor para equipe grande)
-├── Estatística: Fichas se perdem, ficam ilegíveis, não geram análise
-├── Impacto emocional: "Dados perdidos = evolução não comprovada"
-├── Solução ABAplay: Registro pelo celular, 6 níveis de prompt coloridos
-└── Prova: "Gráficos automáticos de evolução"
-
-DOR 4: PAIS DESCONECTADOS (melhor para clínicas particulares)
-├── Estatística: Pais cobram relatórios constantemente, gera atrito
-├── Impacto emocional: "Pais ansiosos = reclamações e churn"
-├── Solução ABAplay: Portal dos Pais com acesso em tempo real
-└── Prova: "Maior engajamento e confiança"
-
-DOR 5: WHATSAPP BAGUNÇADO (melhor para clínicas com equipe)
-├── Estatística: Discussões de casos misturadas com vida pessoal
-├── Impacto emocional: "Informação importante perdida em grupo"
-├── Solução ABAplay: Chat profissional por paciente com histórico
-└── Prova: "Comunicação organizada e documentada"
+🎓 FORMAÇÃO E SUPERVISÃO:
+• Gráficos de desempenho para supervisão de estagiários/ATs
+• Padronização de procedimentos entre terapeutas
+• Biblioteca compartilhada de programas
+• Rastreabilidade de intervenções
 
 ═══════════════════════════════════════════════════════════════════════════════
-CONTEXTO CULTURAL BRASILEIRO - TOM E ABORDAGEM
+MAPEAMENTO: TOM_SUGERIDO → ESTILO DE ESCRITA
 ═══════════════════════════════════════════════════════════════════════════════
 
-O brasileiro valoriza:
-✓ Calor humano e cordialidade (cumprimente sempre antes de falar de negócios)
-✓ Empatia genuína (mostre que entende a dor, não seja robótico)
-✓ Informalidade respeitosa (pode usar "você", evite excesso de "Prezado(a)")
-✓ Prova social e autoridade (mencione que foi feito por profissionais ABA)
-✓ Benefício claro e tangível (números, economia de tempo/dinheiro)
+O campo "tom_sugerido" indica como calibrar a comunicação:
 
-O brasileiro NÃO gosta de:
-✗ Frieza corporativa americana ("Dear Sir/Madam")
-✗ Pressão agressiva de venda ("COMPRE AGORA!!!")
-✗ Promessas vagas ("revolucione sua clínica")
-✗ Emails longos demais (ninguém lê)
+"consultivo" → 
+  • Abordagem de especialista para especialista
+  • Mencione dados, evidências, métricas complexas
+  • Mostre profundidade técnica
+  • Evite simplificações — o decisor é sofisticado
+  • Ex: "Os gráficos de linha de base múltipla do ABAplay permitem análise de tendência em tempo real..."
+
+"formal" →
+  • Tom institucional e respeitoso
+  • Use tratamento mais cerimonioso ("Prezada Sra.", "Estimada equipe")
+  • Foque em credibilidade, transparência, prestação de contas
+  • Ideal para ONGs, associações, instituições públicas
+  • Ex: "Prezada Sra. Mariza, sabemos da responsabilidade de uma instituição como a ATEAL..."
+
+"direto" →
+  • Vá ao ponto rapidamente
+  • Menos floreios, mais benefício concreto
+  • Ideal para redes em expansão, gestores práticos
+  • Ex: "3 unidades, 1 sistema. Prontuários centralizados, supervisão em tempo real."
+
+"acolhedor" →
+  • Tom caloroso, empático, humano
+  • Reconheça a jornada pessoal (especialmente se há fundadores com história familiar)
+  • Foque em experiência da família, comunicação com pais
+  • Ex: "Quem fundou uma clínica pensando no próprio filho sabe o quanto os pais precisam de transparência..."
+
+"neutro" (ou ausente) →
+  • Use tom padrão: profissional, cordial, brasileiro
+  • Estrutura PAS clássica
 
 ═══════════════════════════════════════════════════════════════════════════════
-FRAMEWORK: PAS + CORDIALIDADE BRASILEIRA
+MAPEAMENTO: PERFIL DE CLÍNICA → BENEFÍCIOS PRIORITÁRIOS
 ═══════════════════════════════════════════════════════════════════════════════
 
-ESTRUTURA DO EMAIL:
+Use o "resumo_clinica" para identificar o tipo e priorizar benefícios:
+
+CLÍNICA DE GRANDE PORTE / REFERÊNCIA:
+• Priorize: Gráficos avançados, dados para pesquisa, padronização de equipe grande
+• Evite: Benefícios básicos que pareçam triviais
+
+REDE COM MÚLTIPLAS UNIDADES:
+• Priorize: Centralização de prontuários, supervisão remota, padrão de qualidade unificado
+• Gancho: "X unidades, 1 sistema"
+
+ONG / INSTITUIÇÃO FILANTRÓPICA:
+• Priorize: Transparência em relatórios, prestação de contas, volume de atendimento
+• Mencione: Eficiência operacional (fazer mais com menos)
+
+CLÍNICA MULTIDISCIPLINAR:
+• Priorize: Integração entre especialidades (Fono, TO, Psico na mesma linha do tempo)
+• Gancho: "Equipe integrada precisa de dados integrados"
+
+CLÍNICA FAMILIAR / FUNDADA POR PAIS:
+• Priorize: Portal dos Pais, comunicação transparente, experiência da família
+• Tom: Mais emocional e empático
+
+CLÍNICA COM BRAÇO EDUCACIONAL (cursos, academy):
+• Priorize: Supervisão de estagiários, gráficos de desempenho, formação
+• Gancho: Facilita a supervisão clínica de alunos em formação
+
+═══════════════════════════════════════════════════════════════════════════════
+MAPEAMENTO: PERFIL DO DECISOR → ABORDAGEM
+═══════════════════════════════════════════════════════════════════════════════
+
+Use o "perfil_decisor" para calibrar a mensagem:
+
+PESQUISADOR / AUTORIDADE TÉCNICA (Dr., PhD, publicações):
+• Fale de dados, evidências, gráficos complexos
+• Evite simplificações — ele detecta superficialidade
+• Mostre que o ABAplay foi feito por quem entende ABA
+
+GESTOR / DIRETOR EXECUTIVO:
+• Foque em ROI, eficiência, escala
+• Mencione redução de custos, tempo economizado
+• Números concretos: "90% menos glosas", "92% menos tempo em PEI"
+
+FUNDADOR COM HISTÓRIA PESSOAL (mãe/pai de autista):
+• Reconheça a jornada
+• Foque em experiência da família, cuidado, transparência
+• Tom mais humano e menos corporativo
+
+SUPERINTENDENTE / LÍDER INSTITUCIONAL:
+• Foque em sustentabilidade, prestação de contas, parcerias
+• Tom mais formal e institucional
+
+COORDENADOR / SUPERVISOR CLÍNICO:
+• Foque em operação do dia a dia
+• Tempo economizado, padronização, facilidade de supervisão
+
+═══════════════════════════════════════════════════════════════════════════════
+USANDO OS CAMPOS DO LEAD ENRIQUECIDO
+═══════════════════════════════════════════════════════════════════════════════
+
+Você receberá estes campos — use-os estrategicamente:
+
+1. "resumo_clinica" → Entenda o TIPO de clínica para escolher benefícios
+2. "perfil_decisor" → Calibre a ABORDAGEM e profundidade técnica
+3. "gancho_personalizacao" → USE ESTE GANCHO! É ouro. Incorpore no email.
+4. "dor_provavel" → Esta é a DOR para usar na estrutura PAS
+5. "tom_sugerido" → Define o ESTILO de escrita (consultivo/formal/direto/acolhedor)
+
+REGRA DE OURO: O "gancho_personalizacao" já foi pensado para aquele lead específico.
+Não ignore — use como base da personalização.
+
+═══════════════════════════════════════════════════════════════════════════════
+ESTRUTURA DO EMAIL
+═══════════════════════════════════════════════════════════════════════════════
 
 1. ASSUNTO (30-50 caracteres)
-   • Mencione a DOR ou o BENEFÍCIO específico
-   • Use números quando possível
-   • Personalize com nome da clínica se disponível
+   • Personalize com nome da clínica quando possível
+   • Mencione a dor ou benefício específico do lead
+   • Use o gancho se couber
 
-2. SAUDAÇÃO CORDIAL (obrigatória)
-   • Com nome: "Oi, [Nome]! Tudo bem?"
-   • Sem nome: "Oi! Tudo bem com a equipe da [Clínica]?"
-   • NUNCA pule a saudação
+2. SAUDAÇÃO (adapte ao tom_sugerido)
+   • consultivo/formal: "Prezado Dr. [Nome]" ou "Estimada [Nome]"
+   • direto: "Oi, [Nome]!" ou "Olá, equipe [Clínica]!"
+   • acolhedor: "Oi, [Nome]! Tudo bem por aí?"
 
-3. GANCHO DE EMPATIA (1 frase)
-   • Use "sei que", "imagino que", "a gente sabe como é"
-   • Exemplo: "Sei como a rotina de uma clínica ABA é puxada..."
+3. GANCHO PERSONALIZADO (1-2 frases)
+   • USE o campo "gancho_personalizacao" como base
+   • Mostre que você pesquisou sobre eles
+   • Conecte algo específico deles ao ABAplay
 
-4. PROBLEMA/DOR (1-2 frases)
-   • Seja específico e use números quando possível
-   • Toque na dor emocional por trás do problema
+4. DOR + IMPACTO (1-2 frases)
+   • USE o campo "dor_provavel"
+   • Amplifique brevemente o impacto
 
-5. SOLUÇÃO + BENEFÍCIO QUANTIFICADO (1-2 frases)
-   • Apresente o ABAplay como a solução
-   • Sempre inclua um número ou métrica
-   • Mencione que foi feito por profissionais ABA (autoridade)
+5. SOLUÇÃO ESPECÍFICA (1-2 frases)
+   • Conecte o benefício do ABAplay à dor identificada
+   • Inclua métrica quando possível
 
-6. CTA SUAVE MAS CLARO (1 frase)
-   • "Posso te mostrar como funciona em 15 minutinhos?"
-   • "Quer ver uma demo rápida essa semana?"
+6. CTA (1 frase)
+   • Adapte ao tom:
+     - consultivo: "Posso apresentar os recursos de análise em uma conversa de 15 minutos?"
+     - formal: "Seria um prazer agendar uma apresentação com sua equipe."
+     - direto: "15 min para mostrar como funciona?"
+     - acolhedor: "Que tal uma conversa rápida essa semana?"
 
-7. ASSINATURA (FIXA - não altere)
-   ---
-   Gabriel Gomes
-   ABAplay | Gestão para Clínicas ABA
-   (11) 98854-3437
-   abaplay.app.br/info
+7. ASSINATURA (FIXA):
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
 
-   Responda REMOVER para sair da lista.
-   ---
-
-═══════════════════════════════════════════════════════════════════════════════
-SELEÇÃO INTELIGENTE DE DOR
-═══════════════════════════════════════════════════════════════════════════════
-
-Use os INSIGHTS do lead para escolher a dor mais relevante:
-• Se o lead atende convênios → DOR 1 (glosas)
-• Se o lead é escola ou atende escolas → DOR 2 (PEI)
-• Se o lead tem equipe grande → DOR 3 (registro) ou DOR 5 (comunicação)
-• Se o lead é clínica particular → DOR 4 (pais)
-• Se não há informações → Use DOR 1 (glosas) ou DOR 2 (PEI) — são universais
-
-Se o DECISOR é:
-• Dono/Diretor → Foque em ROI, glosas, profissionalização
-• Supervisor/Coordenador → Foque em tempo, PEI, padronização
+Responda REMOVER para sair da lista.
+---
 
 ═══════════════════════════════════════════════════════════════════════════════
-REGRAS ABSOLUTAS
+REGRAS
 ═══════════════════════════════════════════════════════════════════════════════
 
 ✓ FAÇA:
-• Mantenha o corpo em no máximo 80 palavras (sem contar assinatura)
-• Use apenas UMA dor por email (não misture)
-• Personalize com nome da clínica/decisor quando disponível
-• Inclua pelo menos 1 número/estatística
-• Mantenha tom empático e profissional
-• Sempre inclua a assinatura completa com opção de REMOVER
+• Corpo com no máximo 100 palavras (sem contar assinatura)
+• Use o gancho_personalizacao — é o diferencial
+• Adapte o tom conforme tom_sugerido
+• Inclua pelo menos 1 número/métrica
+• Seja específico para aquele lead
 
 ✗ NÃO FAÇA:
-• Não mencione preços (R$ 35/paciente) — deixe para a demo
-• Não mencione quantidade de pacientes ou planos
-• Não use emojis no corpo
-• Não faça promessas exageradas
-• Não escreva parágrafos longos
-• Não use "Prezado(a) Senhor(a)" — muito formal
+• Não mencione preços
+• Não use o mesmo email genérico para todos
+• Não ignore os campos de contexto
+• Não seja genérico quando tem dados ricos
+• Não misture tons (ex: formal + "15 minutinhos")
+
+═══════════════════════════════════════════════════════════════════════════════
+EXEMPLOS COM DADOS ENRIQUECIDOS
+═══════════════════════════════════════════════════════════════════════════════
+
+EXEMPLO 1: Tom Consultivo (Autoridade Técnica)
+---
+Lead: Grupo Conduzir | Dr. Fábio Coelho (Fundador/Pesquisador)
+Tom: consultivo
+Gancho: Conduzir Academy + supervisão de estagiários
+Dor: Gráficos ABA complexos que sistemas genéricos não entregam
+
+Assunto: Conduzir: gráficos de linha de base no ABAplay
+
+Prezado Dr. Fábio,
+
+A Conduzir Academy forma profissionais que precisam de supervisão baseada em dados — e sistemas genéricos raramente entregam os gráficos de evolução que a análise ABA exige.
+
+O ABAplay foi desenvolvido por analistas do comportamento. Oferece gráficos de linha de base, tendência automática e exportação de dados brutos para pesquisa.
+
+Posso apresentar os recursos de análise em 20 minutos?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---
+
+EXEMPLO 2: Tom Formal (Instituição/ONG)
+---
+Lead: ATEAL | Mariza Cavenaghi (Superintendente)
+Tom: formal
+Gancho: Transparência em relatórios para prestação de contas
+Dor: Alto volume de pacientes gera gargalo em relatórios
+
+Assunto: ATEAL: relatórios de evolução em escala
+
+Prezada Sra. Mariza,
+
+Instituições como a ATEAL, que prestam contas à sociedade, precisam de relatórios de evolução consistentes — mesmo com alto volume de pacientes.
+
+O ABAplay gera relatórios profissionais em segundos, com gráficos padronizados e rastreabilidade completa. Ideal para auditorias e prestação de contas.
+
+Seria um prazer apresentar a plataforma à sua equipe.
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---
+
+EXEMPLO 3: Tom Direto (Rede em Expansão)
+---
+Lead: CompletaMente ABA | Decisor desconhecido
+Tom: direto
+Gancho: 3 unidades precisam de prontuários centralizados
+Dor: Supervisão difícil sem sistema unificado
+
+Assunto: CompletaMente: 3 unidades, 1 sistema
+
+Olá, equipe CompletaMente!
+
+Coordenar terapeutas em Jundiaí, Caieiras e Taipas sem um sistema centralizado é um desafio. Prontuários fragmentados dificultam supervisão e padrão de qualidade.
+
+O ABAplay centraliza tudo em nuvem: prontuários, gráficos e comunicação — acesso em tempo real de qualquer unidade.
+
+15 minutos para mostrar como funciona?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---
+
+EXEMPLO 4: Tom Acolhedor (Fundada por Mãe)
+---
+Lead: Evoluir Brincando | Sócias-Fundadoras (inclui mãe de autista)
+Tom: acolhedor
+Gancho: Mãe fundadora valoriza portal dos pais
+Dor: WhatsApp bagunçado, sobrecarga administrativa
+
+Assunto: Evoluir Brincando: pais conectados
+
+Oi, equipe Evoluir Brincando! Tudo bem?
+
+Quem fundou uma clínica pensando no próprio filho sabe o quanto os pais precisam acompanhar a evolução de perto — sem depender de mensagens no WhatsApp.
+
+O ABAplay tem um Portal dos Pais onde eles veem gráficos e sessões em tempo real. Menos cobrança, mais confiança.
+
+Que tal uma conversa essa semana?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---
+
+EXEMPLO 5: Tom Acolhedor (Multidisciplinar)
+---
+Lead: Clínica Vivere | Decisor desconhecido
+Tom: acolhedor
+Gancho: Equipe multidisciplinar integrada
+Dor: Dados fragmentados entre especialidades
+
+Assunto: Vivere: equipe integrada, dados integrados
+
+Oi, equipe da Vivere! Tudo bem?
+
+Vocês destacam a integração da equipe multidisciplinar — e sabemos que, na prática, integrar dados de fono, TO e psicólogo costuma ser o desafio.
+
+No ABAplay, todas as especialidades registram na mesma linha do tempo. A evolução do paciente fica completa, não fragmentada.
+
+Posso mostrar como funciona em 15 minutinhos?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---
 
 ═══════════════════════════════════════════════════════════════════════════════
 OUTPUT
 ═══════════════════════════════════════════════════════════════════════════════
 
-Responda APENAS com JSON válido no formato:
+Responda APENAS com JSON válido:
 {{"assunto": "...", "corpo": "..."}}
 
-O campo "corpo" deve incluir TODO o email, incluindo saudação e assinatura completa.
+O campo "corpo" deve incluir o email completo com saudação e assinatura.
 """),
-    ("user", """DADOS DO LEAD:
-Clínica: {nome_clinica}
-Cidade/UF: {cidade}
-Decisor: {decisor_nome}
-Cargo do decisor: {decisor_cargo}
-Tipo de email: {email_tipo}
-Insights adicionais: {insights}
+    ("user", """LEAD ENRIQUECIDO:
 
-Gere o email personalizado em JSON:
+Clínica: {nome_clinica}
+Cidade/UF: {cidade_uf}
+Site: {site}
+
+DECISOR:
+Nome: {decisor_nome}
+Cargo: {decisor_cargo}
+
+CONTATO:
+Email: {email_principal}
+Tipo de email: {email_tipo}
+
+CONTEXTO DE ABORDAGEM:
+Resumo da clínica: {resumo_clinica}
+Perfil do decisor: {perfil_decisor}
+Gancho de personalização: {gancho_personalizacao}
+Dor provável: {dor_provavel}
+Tom sugerido: {tom_sugerido}
+
+Confiança do lead: {confianca}
+
+---
+Gere o email hiperpersonalizado:
 {{"assunto": "...", "corpo": "..."}}""")
 ])
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMPT DE FOLLOW-UP (adaptado para dados enriquecidos)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+EMAIL_FOLLOWUP_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Você gera emails de FOLLOW-UP para leads que não responderam.
+
+PRINCÍPIOS:
+• Reconheça que a pessoa é ocupada
+• Traga um NOVO ângulo (não repita a dor do primeiro email)
+• Máximo 60 palavras
+• Mantenha o tom_sugerido do lead original
+• Pode mencionar uma novidade ou caso de sucesso
+
+ESTRUTURA:
+1. "[Nome], passando rapidinho..."
+2. Novo gancho ou benefício diferente
+3. CTA super curto
+4. Assinatura
+
+Use o campo "dor_alternativa" para variar a abordagem.
+
+DORES ALTERNATIVAS (se a primeira foi X, use Y):
+• Glosas → PEI automático
+• PEI → Portal dos Pais
+• Registro manual → Gráficos automáticos
+• WhatsApp bagunçado → Integração multidisciplinar
+• Supervisão → Biblioteca de programas
+
+Responda APENAS com JSON: {{"assunto": "...", "corpo": "..."}}
+"""),
+    ("user", """FOLLOW-UP PARA:
+
+Clínica: {nome_clinica}
+Decisor: {decisor_nome}
+Tom sugerido: {tom_sugerido}
+Dor usada no primeiro email: {dor_primeiro_email}
+Dias desde contato: {dias_desde_contato}
+
+{{"assunto": "...", "corpo": "..."}}""")
+])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMPT PARA PROCESSAR BATCH DE LEADS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BATCH_PRIORITIZATION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Você analisa um batch de leads e prioriza a ordem de contato.
+
+CRITÉRIOS DE PRIORIZAÇÃO:
+1. Confiança "alta" > "media" > "baixa"
+2. Decisor identificado > decisor desconhecido
+3. Email direto > email departamento > form_only
+4. Clínicas maiores/redes > clínicas pequenas
+5. Dor clara identificada > dor vaga
+
+Para cada lead, atribua:
+- prioridade: 1 (alta), 2 (média), 3 (baixa)
+- motivo: razão da priorização
+- sequencia_sugerida: ordem de contato
+
+Responda em JSON:
+{{
+  "leads_priorizados": [
+    {{"nome_clinica": "...", "prioridade": 1, "motivo": "...", "sequencia": 1}},
+    ...
+  ],
+  "observacoes": "..."
+}}
+"""),
+    ("user", """BATCH DE LEADS:
+{leads_json}
+
+Priorize para contato:""")
+])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNÇÃO AUXILIAR PARA EXTRAIR DADOS DO NOVO FORMATO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def extract_lead_data_for_prompt(lead: dict) -> dict:
+    """
+    Extrai e formata os dados do lead enriquecido para o prompt.
+    
+    Args:
+        lead: Dicionário do lead no novo formato
+        
+    Returns:
+        Dicionário formatado para o prompt
+    """
+    decisor = lead.get('decisor', {})
+    contatos = lead.get('contatos', {})
+    contexto = lead.get('contexto_abordagem', {})
+    
+    return {
+        "nome_clinica": lead.get('nome_clinica', 'Clínica'),
+        "cidade_uf": lead.get('cidade_uf', ''),
+        "site": lead.get('site', ''),
+        
+        # Decisor
+        "decisor_nome": decisor.get('nome') or 'Equipe',
+        "decisor_cargo": decisor.get('cargo') or '',
+        
+        # Contato
+        "email_principal": contatos.get('email_principal') or '',
+        "email_tipo": contatos.get('email_tipo') or 'generico',
+        
+        # Contexto (os campos novos!)
+        "resumo_clinica": contexto.get('resumo_clinica') or '',
+        "perfil_decisor": contexto.get('perfil_decisor') or '',
+        "gancho_personalizacao": contexto.get('gancho_personalizacao') or '',
+        "dor_provavel": contexto.get('dor_provavel') or '',
+        "tom_sugerido": contexto.get('tom_sugerido') or 'neutro',
+        
+        # Metadata
+        "confianca": lead.get('confianca', 'media')
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNÇÕES DE PROCESSAMENTO
+# ═══════════════════════════════════════════════════════════════════════════════
 
 async def process_leads_with_llm(leads_json: str, regiao: str) -> Dict:
     """
@@ -327,13 +672,12 @@ def process_leads_with_llm_sync(leads_json: str, regiao: str) -> Dict:
     return loop.run_until_complete(process_leads_with_llm(leads_json, regiao))
 
 
-async def generate_email_with_llm(lead: Dict, insights: str = "") -> Dict:
+async def generate_email_for_enriched_lead(lead: dict) -> dict:
     """
-    Gera email personalizado usando LLM
+    Gera email personalizado para lead enriquecido (v3.0).
     
     Args:
-        lead: Dados do lead
-        insights: Insights sobre o lead (do processamento)
+        lead: Lead no novo formato com contexto_abordagem
         
     Returns:
         Dict com assunto e corpo do email
@@ -341,31 +685,95 @@ async def generate_email_with_llm(lead: Dict, insights: str = "") -> Dict:
     try:
         llm = get_llm()
         parser = JsonOutputParser()
+        chain = EMAIL_GENERATION_PROMPT | llm | parser
+        
+        # Extrai dados formatados
+        prompt_data = extract_lead_data_for_prompt(lead)
+        
+        result = await chain.ainvoke(prompt_data)
+        return result
+        
+    except Exception as e:
+        # Fallback
+        nome = lead.get('nome_clinica', 'Clínica')
+        return {
+            "assunto": f"{nome}: gestão ABA profissional",
+            "corpo": f"""Olá, equipe {nome}!
+
+Clínicas ABA perdem tempo com burocracia que poderia ser automatizada.
+
+O ABAplay resolve isso com registro de sessões pelo celular, gráficos automáticos e relatórios em 1 clique.
+
+Posso mostrar em 15 minutos?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---""",
+            "error": str(e)
+        }
+
+
+async def generate_email_with_llm(lead: Dict, insights: str = "") -> Dict:
+    """
+    Gera email personalizado usando LLM (compatibilidade com v2.0 e v3.0).
+    
+    Detecta automaticamente se o lead possui contexto_abordagem e usa
+    o prompt apropriado.
+    
+    Args:
+        lead: Dados do lead
+        insights: Insights sobre o lead (usado se não houver contexto_abordagem)
+        
+    Returns:
+        Dict com assunto e corpo do email
+    """
+    # Se tem contexto_abordagem, usa o novo sistema v3.0
+    if lead.get('contexto_abordagem'):
+        return await generate_email_for_enriched_lead(lead)
+    
+    # Fallback para leads sem enriquecimento (compatibilidade)
+    try:
+        llm = get_llm()
+        parser = JsonOutputParser()
         
         chain = EMAIL_GENERATION_PROMPT | llm | parser
         
-        # Extrai dados do lead
+        # Extrai dados do lead (formato legado)
         decisor = lead.get('decisor', {})
         contatos = lead.get('contatos', {})
         
-        result = await chain.ainvoke({
+        # Monta dados no formato esperado pelo novo prompt
+        prompt_data = {
             "nome_clinica": lead.get('nome_clinica', 'Clínica'),
-            "cidade": lead.get('cidade_uf', '').split(' - ')[0] if lead.get('cidade_uf') else '',
-            "email": contatos.get('email_principal') or lead.get('email_principal', ''),
-            "decisor_nome": decisor.get('nome') or lead.get('decisor_nome', ''),
+            "cidade_uf": lead.get('cidade_uf', '').split(' - ')[0] if lead.get('cidade_uf') else '',
+            "site": lead.get('site', ''),
+            "decisor_nome": decisor.get('nome') or lead.get('decisor_nome', 'Equipe'),
             "decisor_cargo": decisor.get('cargo') or lead.get('decisor_cargo', ''),
+            "email_principal": contatos.get('email_principal') or lead.get('email_principal', ''),
             "email_tipo": contatos.get('email_tipo') or lead.get('email_tipo', 'generico'),
-            "insights": insights
-        })
+            # Campos de contexto vazios (lead não enriquecido)
+            "resumo_clinica": insights or '',
+            "perfil_decisor": '',
+            "gancho_personalizacao": '',
+            "dor_provavel": '',
+            "tom_sugerido": 'neutro',
+            "confianca": lead.get('confianca', 'media')
+        }
         
+        result = await chain.ainvoke(prompt_data)
         return result
         
     except Exception as e:
         # Fallback: retorna template básico
         nome_clinica = lead.get('nome_clinica', 'Clínica')
         return {
-            "assunto": f"{nome_clinica}: reduza glosas em até 8% com documentação padronizada",
-            "corpo": f"""Olá equipe {nome_clinica},
+            "assunto": f"{nome_clinica}: reduza glosas em até 90% com documentação padronizada",
+            "corpo": f"""Olá equipe {nome_clinica}!
 
 Clínicas ABA perdem em média 5-8% da receita por glosas. O ABAplay resolve isso.
 
@@ -373,11 +781,12 @@ Posso mostrar em 15 minutos?
 
 ---
 Gabriel Gomes
-Engenheiro de Software | ABAplay
+ABAplay | Gestão para Clínicas ABA
 (11) 98854-3437
-https://abaplay.app.br/info
+abaplay.app.br/info
 
-Se não deseja receber mais emails, responda com REMOVER.""",
+Responda REMOVER para sair da lista.
+---""",
             "error": str(e)
         }
 
@@ -393,6 +802,71 @@ def generate_email_with_llm_sync(lead: Dict, insights: str = "") -> Dict:
         asyncio.set_event_loop(loop)
     
     return loop.run_until_complete(generate_email_with_llm(lead, insights))
+
+
+async def generate_followup_email(lead: Dict, dor_primeiro_email: str, dias_desde_contato: int) -> Dict:
+    """
+    Gera email de follow-up para lead que não respondeu.
+    
+    Args:
+        lead: Dados do lead
+        dor_primeiro_email: A dor usada no primeiro email
+        dias_desde_contato: Dias desde o último contato
+        
+    Returns:
+        Dict com assunto e corpo do email
+    """
+    try:
+        llm = get_llm()
+        parser = JsonOutputParser()
+        chain = EMAIL_FOLLOWUP_PROMPT | llm | parser
+        
+        decisor = lead.get('decisor', {})
+        contexto = lead.get('contexto_abordagem', {})
+        
+        result = await chain.ainvoke({
+            "nome_clinica": lead.get('nome_clinica', 'Clínica'),
+            "decisor_nome": decisor.get('nome') or 'Equipe',
+            "tom_sugerido": contexto.get('tom_sugerido', 'neutro'),
+            "dor_primeiro_email": dor_primeiro_email,
+            "dias_desde_contato": dias_desde_contato
+        })
+        
+        return result
+        
+    except Exception as e:
+        nome = lead.get('nome_clinica', 'Clínica')
+        return {
+            "assunto": f"Re: {nome}",
+            "corpo": f"""Oi, equipe {nome}!
+
+Passando rapidinho — vi que ainda não conseguimos conversar.
+
+Posso mostrar o ABAplay em 15 minutinhos essa semana?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---""",
+            "error": str(e)
+        }
+
+
+def generate_followup_email_sync(lead: Dict, dor_primeiro_email: str, dias_desde_contato: int) -> Dict:
+    """Versão síncrona da geração de follow-up"""
+    import asyncio
+    
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    return loop.run_until_complete(generate_followup_email(lead, dor_primeiro_email, dias_desde_contato))
 
 
 def test_llm_connection() -> Tuple[bool, str]:

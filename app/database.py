@@ -30,7 +30,10 @@ SHEET_COLUMNS = {
     'campaigns': ['id', 'name', 'region', 'created_at', 'status', 'total_leads', 'emails_sent', 'emails_failed'],
     'leads': ['id', 'campaign_id', 'nome_clinica', 'endereco', 'cidade_uf', 'cnpj', 'site',
               'decisor_nome', 'decisor_cargo', 'decisor_linkedin', 'email_principal', 'email_tipo',
-              'telefone', 'whatsapp', 'instagram', 'fonte', 'confianca', 'score', 'raw_data', 'created_at'],
+              'telefone', 'whatsapp', 'instagram', 'fonte', 'confianca', 'score',
+              # Campos do contexto_abordagem (v3.0)
+              'resumo_clinica', 'perfil_decisor', 'gancho_personalizacao', 'dor_provavel', 'tom_sugerido',
+              'raw_data', 'created_at'],
     'email_log': ['id', 'lead_id', 'campaign_id', 'email_to', 'subject', 'status', 
                   'attempt_number', 'resend_id', 'error_message', 'sent_at', 'created_at'],
     'blacklist': ['id', 'email', 'reason', 'added_at']
@@ -215,6 +218,9 @@ def insert_lead(campaign_id: str, lead_data: Dict) -> str:
     ws = get_worksheet('leads')
     lead_id = _generate_id()
     
+    # Extrai contexto_abordagem se existir
+    contexto = lead_data.get('contexto_abordagem', {})
+    
     row = [
         lead_id,
         campaign_id,
@@ -234,6 +240,12 @@ def insert_lead(campaign_id: str, lead_data: Dict) -> str:
         lead_data.get('fonte', ''),
         lead_data.get('confianca', ''),
         lead_data.get('score', 0),
+        # Campos do contexto_abordagem (v3.0)
+        contexto.get('resumo_clinica', ''),
+        contexto.get('perfil_decisor', ''),
+        contexto.get('gancho_personalizacao', ''),
+        contexto.get('dor_provavel', ''),
+        contexto.get('tom_sugerido', ''),
         json.dumps(lead_data),
         _now_iso()
     ]
