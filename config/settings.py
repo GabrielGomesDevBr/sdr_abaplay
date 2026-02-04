@@ -33,8 +33,11 @@ DELAY_BATCH_EXTRA_MAX = 600   # 10 min extras a cada batch
 # === Paths ===
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
-DATABASE_PATH = DATA_DIR / "email_automation.db"
 DESKTOP_PATH = Path(os.getenv("DESKTOP_PATH", Path.home() / "Área de Trabalho"))
+
+# === Google Sheets Configuration ===
+GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID", "")
+GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json")
 
 # === Lead Scoring Weights ===
 SCORE_EMAIL_EXISTS = 30

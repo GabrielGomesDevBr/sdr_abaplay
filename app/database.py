@@ -1,355 +1,445 @@
 """
-Gerenciamento de banco de dados SQLite para automação de emails
+Gerenciamento de banco de dados usando Google Sheets para automação de emails
 """
-import sqlite3
-from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import json
+import uuid
+import os
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config.settings import DATABASE_PATH, DATA_DIR
+from config.settings import (
+    GOOGLE_SHEETS_SPREADSHEET_ID, 
+    GOOGLE_SHEETS_CREDENTIALS_PATH,
+    BASE_DIR
+)
+
+# === Google Sheets Connection ===
+
+# Cache para evitar múltiplas conexões
+_client = None
+_spreadsheet = None
+_worksheets = {}
+
+# Definição das colunas para cada aba
+SHEET_COLUMNS = {
+    'campaigns': ['id', 'name', 'region', 'created_at', 'status', 'total_leads', 'emails_sent', 'emails_failed'],
+    'leads': ['id', 'campaign_id', 'nome_clinica', 'endereco', 'cidade_uf', 'cnpj', 'site',
+              'decisor_nome', 'decisor_cargo', 'decisor_linkedin', 'email_principal', 'email_tipo',
+              'telefone', 'whatsapp', 'instagram', 'fonte', 'confianca', 'score', 'raw_data', 'created_at'],
+    'email_log': ['id', 'lead_id', 'campaign_id', 'email_to', 'subject', 'status', 
+                  'attempt_number', 'resend_id', 'error_message', 'sent_at', 'created_at'],
+    'blacklist': ['id', 'email', 'reason', 'added_at']
+}
 
 
-def get_connection() -> sqlite3.Connection:
-    """Retorna conexão com o banco de dados"""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _get_credentials():
+    """Retorna credenciais do Google"""
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
+    
+    # Tenta carregar de diferentes fontes
+    creds_path = Path(GOOGLE_SHEETS_CREDENTIALS_PATH)
+    if not creds_path.is_absolute():
+        creds_path = BASE_DIR / GOOGLE_SHEETS_CREDENTIALS_PATH
+    
+    # Para Streamlit Cloud, as credenciais podem vir de secrets
+    if creds_path.exists():
+        return Credentials.from_service_account_file(str(creds_path), scopes=scopes)
+    
+    # Fallback: tentar carregar de variável de ambiente (para Streamlit Cloud)
+    creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
+    if creds_json:
+        import json
+        creds_info = json.loads(creds_json)
+        return Credentials.from_service_account_info(creds_info, scopes=scopes)
+    
+    raise FileNotFoundError(f"Credenciais não encontradas em {creds_path}")
+
+
+def get_client():
+    """Retorna cliente gspread (com cache)"""
+    global _client
+    if _client is None:
+        creds = _get_credentials()
+        _client = gspread.authorize(creds)
+    return _client
+
+
+def get_spreadsheet():
+    """Retorna a planilha (com cache)"""
+    global _spreadsheet
+    if _spreadsheet is None:
+        client = get_client()
+        _spreadsheet = client.open_by_key(GOOGLE_SHEETS_SPREADSHEET_ID)
+    return _spreadsheet
+
+
+def get_worksheet(sheet_name: str):
+    """Retorna uma aba específica (com cache)"""
+    global _worksheets
+    if sheet_name not in _worksheets:
+        spreadsheet = get_spreadsheet()
+        try:
+            _worksheets[sheet_name] = spreadsheet.worksheet(sheet_name)
+        except gspread.WorksheetNotFound:
+            # Cria a aba se não existir
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            # Adiciona cabeçalho
+            if sheet_name in SHEET_COLUMNS:
+                worksheet.update('A1', [SHEET_COLUMNS[sheet_name]])
+            _worksheets[sheet_name] = worksheet
+    return _worksheets[sheet_name]
+
+
+def _generate_id() -> str:
+    """Gera um ID único"""
+    return str(uuid.uuid4())[:8]
+
+
+def _now_iso() -> str:
+    """Retorna timestamp atual em formato ISO"""
+    return datetime.now().isoformat()
+
+
+def _row_to_dict(headers: List[str], row: List) -> Dict:
+    """Converte uma linha para dicionário"""
+    result = {}
+    for i, header in enumerate(headers):
+        value = row[i] if i < len(row) else None
+        # Converte valores numéricos
+        if header in ['score', 'total_leads', 'emails_sent', 'emails_failed', 'attempt_number']:
+            try:
+                value = int(value) if value else 0
+            except (ValueError, TypeError):
+                value = 0
+        result[header] = value
+    return result
 
 
 def init_database():
-    """Inicializa o banco de dados com as tabelas necessárias"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Tabela de campanhas
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS campaigns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            region TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'pending',
-            total_leads INTEGER DEFAULT 0,
-            emails_sent INTEGER DEFAULT 0,
-            emails_failed INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Tabela de leads
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS leads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER,
-            nome_clinica TEXT NOT NULL,
-            endereco TEXT,
-            cidade_uf TEXT,
-            cnpj TEXT,
-            site TEXT,
-            decisor_nome TEXT,
-            decisor_cargo TEXT,
-            decisor_linkedin TEXT,
-            email_principal TEXT,
-            email_tipo TEXT,
-            telefone TEXT,
-            whatsapp TEXT,
-            instagram TEXT,
-            fonte TEXT,
-            confianca TEXT,
-            score INTEGER DEFAULT 0,
-            raw_data TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (campaign_id) REFERENCES campaigns (id)
-        )
-    ''')
-    
-    # Tabela de log de emails
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS email_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lead_id INTEGER,
-            campaign_id INTEGER,
-            email_to TEXT NOT NULL,
-            subject TEXT,
-            status TEXT DEFAULT 'pending',
-            attempt_number INTEGER DEFAULT 1,
-            resend_id TEXT,
-            error_message TEXT,
-            sent_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (lead_id) REFERENCES leads (id),
-            FOREIGN KEY (campaign_id) REFERENCES campaigns (id)
-        )
-    ''')
-    
-    # Tabela de blacklist (opt-out)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS blacklist (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            reason TEXT,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Índices para performance
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_campaign ON leads(campaign_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email_principal)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_email_log_lead ON email_log(lead_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_blacklist_email ON blacklist(email)')
-    
-    conn.commit()
-    conn.close()
+    """Inicializa o banco de dados criando as abas necessárias"""
+    for sheet_name in SHEET_COLUMNS.keys():
+        get_worksheet(sheet_name)
 
 
 # === Campaign Functions ===
 
-def create_campaign(name: str, region: str = None) -> int:
+def create_campaign(name: str, region: str = None) -> str:
     """Cria nova campanha e retorna o ID"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO campaigns (name, region) VALUES (?, ?)',
-        (name, region)
-    )
-    campaign_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    ws = get_worksheet('campaigns')
+    campaign_id = _generate_id()
+    
+    row = [
+        campaign_id,
+        name,
+        region or '',
+        _now_iso(),
+        'pending',
+        0,  # total_leads
+        0,  # emails_sent
+        0   # emails_failed
+    ]
+    ws.append_row(row)
     return campaign_id
 
 
-def update_campaign_stats(campaign_id: int, total_leads: int = None, 
+def update_campaign_stats(campaign_id: str, total_leads: int = None, 
                           emails_sent: int = None, emails_failed: int = None,
                           status: str = None):
     """Atualiza estatísticas da campanha"""
-    conn = get_connection()
-    cursor = conn.cursor()
+    ws = get_worksheet('campaigns')
     
-    updates = []
-    values = []
-    
-    if total_leads is not None:
-        updates.append('total_leads = ?')
-        values.append(total_leads)
-    if emails_sent is not None:
-        updates.append('emails_sent = ?')
-        values.append(emails_sent)
-    if emails_failed is not None:
-        updates.append('emails_failed = ?')
-        values.append(emails_failed)
-    if status is not None:
-        updates.append('status = ?')
-        values.append(status)
-    
-    if updates:
-        values.append(campaign_id)
-        cursor.execute(
-            f'UPDATE campaigns SET {", ".join(updates)} WHERE id = ?',
-            values
-        )
-        conn.commit()
-    
-    conn.close()
+    # Encontra a linha da campanha
+    try:
+        cell = ws.find(campaign_id)
+        if not cell:
+            return
+        
+        row_num = cell.row
+        headers = SHEET_COLUMNS['campaigns']
+        
+        updates = []
+        if total_leads is not None:
+            col = headers.index('total_leads') + 1
+            updates.append((row_num, col, total_leads))
+        if emails_sent is not None:
+            col = headers.index('emails_sent') + 1
+            updates.append((row_num, col, emails_sent))
+        if emails_failed is not None:
+            col = headers.index('emails_failed') + 1
+            updates.append((row_num, col, emails_failed))
+        if status is not None:
+            col = headers.index('status') + 1
+            updates.append((row_num, col, status))
+        
+        for row, col, value in updates:
+            ws.update_cell(row, col, value)
+    except Exception:
+        pass
 
 
-def get_campaign(campaign_id: int) -> Optional[Dict]:
+def get_campaign(campaign_id: str) -> Optional[Dict]:
     """Retorna dados da campanha"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM campaigns WHERE id = ?', (campaign_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    ws = get_worksheet('campaigns')
+    
+    try:
+        cell = ws.find(campaign_id)
+        if not cell:
+            return None
+        
+        row = ws.row_values(cell.row)
+        return _row_to_dict(SHEET_COLUMNS['campaigns'], row)
+    except Exception:
+        return None
 
 
 # === Lead Functions ===
 
-def insert_lead(campaign_id: int, lead_data: Dict) -> int:
+def insert_lead(campaign_id: str, lead_data: Dict) -> str:
     """Insere um lead e retorna o ID"""
-    conn = get_connection()
-    cursor = conn.cursor()
+    ws = get_worksheet('leads')
+    lead_id = _generate_id()
     
-    cursor.execute('''
-        INSERT INTO leads (
-            campaign_id, nome_clinica, endereco, cidade_uf, cnpj, site,
-            decisor_nome, decisor_cargo, decisor_linkedin,
-            email_principal, email_tipo, telefone, whatsapp, instagram,
-            fonte, confianca, score, raw_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
+    row = [
+        lead_id,
         campaign_id,
-        lead_data.get('nome_clinica'),
-        lead_data.get('endereco'),
-        lead_data.get('cidade_uf'),
-        lead_data.get('cnpj'),
-        lead_data.get('site'),
-        lead_data.get('decisor', {}).get('nome'),
-        lead_data.get('decisor', {}).get('cargo'),
-        lead_data.get('decisor', {}).get('linkedin'),
-        lead_data.get('contatos', {}).get('email_principal'),
-        lead_data.get('contatos', {}).get('email_tipo'),
-        lead_data.get('contatos', {}).get('telefone'),
-        lead_data.get('contatos', {}).get('whatsapp'),
-        lead_data.get('contatos', {}).get('instagram'),
-        lead_data.get('fonte'),
-        lead_data.get('confianca'),
+        lead_data.get('nome_clinica', ''),
+        lead_data.get('endereco', ''),
+        lead_data.get('cidade_uf', ''),
+        lead_data.get('cnpj', ''),
+        lead_data.get('site', ''),
+        lead_data.get('decisor', {}).get('nome', ''),
+        lead_data.get('decisor', {}).get('cargo', ''),
+        lead_data.get('decisor', {}).get('linkedin', ''),
+        lead_data.get('contatos', {}).get('email_principal', ''),
+        lead_data.get('contatos', {}).get('email_tipo', ''),
+        lead_data.get('contatos', {}).get('telefone', ''),
+        lead_data.get('contatos', {}).get('whatsapp', ''),
+        lead_data.get('contatos', {}).get('instagram', ''),
+        lead_data.get('fonte', ''),
+        lead_data.get('confianca', ''),
         lead_data.get('score', 0),
-        json.dumps(lead_data)
-    ))
-    
-    lead_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+        json.dumps(lead_data),
+        _now_iso()
+    ]
+    ws.append_row(row)
     return lead_id
 
 
-def update_lead_score(lead_id: int, score: int):
+def update_lead_score(lead_id: str, score: int):
     """Atualiza o score de um lead"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE leads SET score = ? WHERE id = ?', (score, lead_id))
-    conn.commit()
-    conn.close()
+    ws = get_worksheet('leads')
+    try:
+        cell = ws.find(lead_id)
+        if cell:
+            score_col = SHEET_COLUMNS['leads'].index('score') + 1
+            ws.update_cell(cell.row, score_col, score)
+    except Exception:
+        pass
 
 
-def get_leads_by_campaign(campaign_id: int, order_by_score: bool = True) -> List[Dict]:
+def get_leads_by_campaign(campaign_id: str, order_by_score: bool = True) -> List[Dict]:
     """Retorna leads de uma campanha ordenados por score"""
-    conn = get_connection()
-    cursor = conn.cursor()
+    ws = get_worksheet('leads')
     
-    order = 'ORDER BY score DESC' if order_by_score else ''
-    cursor.execute(f'SELECT * FROM leads WHERE campaign_id = ? {order}', (campaign_id,))
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:  # Só tem cabeçalho
+        return []
     
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    headers = SHEET_COLUMNS['leads']
+    campaign_id_col = headers.index('campaign_id')
+    
+    leads = []
+    for row in all_rows[1:]:  # Pula cabeçalho
+        if len(row) > campaign_id_col and row[campaign_id_col] == campaign_id:
+            leads.append(_row_to_dict(headers, row))
+    
+    if order_by_score:
+        leads.sort(key=lambda x: x.get('score', 0), reverse=True)
+    
+    return leads
 
 
-def get_lead(lead_id: int) -> Optional[Dict]:
+def get_lead(lead_id: str) -> Optional[Dict]:
     """Retorna dados de um lead"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM leads WHERE id = ?', (lead_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    ws = get_worksheet('leads')
+    
+    try:
+        cell = ws.find(lead_id)
+        if not cell:
+            return None
+        
+        row = ws.row_values(cell.row)
+        return _row_to_dict(SHEET_COLUMNS['leads'], row)
+    except Exception:
+        return None
 
 
 # === Email Log Functions ===
 
-def log_email_attempt(lead_id: int, campaign_id: int, email_to: str, 
-                      subject: str, attempt_number: int = 1) -> int:
+def log_email_attempt(lead_id: str, campaign_id: str, email_to: str, 
+                      subject: str, attempt_number: int = 1) -> str:
     """Registra tentativa de envio de email"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO email_log (lead_id, campaign_id, email_to, subject, attempt_number)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (lead_id, campaign_id, email_to, subject, attempt_number))
-    log_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    ws = get_worksheet('email_log')
+    log_id = _generate_id()
+    
+    row = [
+        log_id,
+        lead_id,
+        campaign_id,
+        email_to,
+        subject,
+        'pending',
+        attempt_number,
+        '',  # resend_id
+        '',  # error_message
+        '',  # sent_at
+        _now_iso()
+    ]
+    ws.append_row(row)
     return log_id
 
 
-def update_email_status(log_id: int, status: str, resend_id: str = None, 
+def update_email_status(log_id: str, status: str, resend_id: str = None, 
                         error_message: str = None):
     """Atualiza status do email enviado"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE email_log 
-        SET status = ?, resend_id = ?, error_message = ?, sent_at = ?
-        WHERE id = ?
-    ''', (status, resend_id, error_message, datetime.now(), log_id))
-    conn.commit()
-    conn.close()
+    ws = get_worksheet('email_log')
+    
+    try:
+        cell = ws.find(log_id)
+        if not cell:
+            return
+        
+        row_num = cell.row
+        headers = SHEET_COLUMNS['email_log']
+        
+        # Atualiza status
+        ws.update_cell(row_num, headers.index('status') + 1, status)
+        
+        if resend_id:
+            ws.update_cell(row_num, headers.index('resend_id') + 1, resend_id)
+        
+        if error_message:
+            ws.update_cell(row_num, headers.index('error_message') + 1, error_message)
+        
+        # Atualiza sent_at
+        ws.update_cell(row_num, headers.index('sent_at') + 1, _now_iso())
+    except Exception:
+        pass
 
 
-def get_email_attempts(lead_id: int) -> int:
+def get_email_attempts(lead_id: str) -> int:
     """Retorna número de tentativas de email para um lead"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT COUNT(*) FROM email_log WHERE lead_id = ?', 
-        (lead_id,)
-    )
-    count = cursor.fetchone()[0]
-    conn.close()
+    ws = get_worksheet('email_log')
+    
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return 0
+    
+    lead_id_col = SHEET_COLUMNS['email_log'].index('lead_id')
+    count = sum(1 for row in all_rows[1:] if len(row) > lead_id_col and row[lead_id_col] == lead_id)
     return count
 
 
 def get_emails_sent_today() -> int:
     """Retorna número de emails enviados hoje"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT COUNT(*) FROM email_log 
-        WHERE DATE(sent_at) = DATE('now', 'localtime')
-        AND status = 'sent'
-    ''')
-    count = cursor.fetchone()[0]
-    conn.close()
+    ws = get_worksheet('email_log')
+    
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return 0
+    
+    headers = SHEET_COLUMNS['email_log']
+    status_col = headers.index('status')
+    sent_at_col = headers.index('sent_at')
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    count = 0
+    for row in all_rows[1:]:
+        if len(row) > max(status_col, sent_at_col):
+            if row[status_col] == 'sent' and row[sent_at_col].startswith(today):
+                count += 1
     return count
 
 
-def get_email_log_by_campaign(campaign_id: int) -> List[Dict]:
+def get_email_log_by_campaign(campaign_id: str) -> List[Dict]:
     """Retorna log de emails de uma campanha"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT el.*, l.nome_clinica 
-        FROM email_log el
-        JOIN leads l ON el.lead_id = l.id
-        WHERE el.campaign_id = ?
-        ORDER BY el.created_at DESC
-    ''', (campaign_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    ws = get_worksheet('email_log')
+    
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return []
+    
+    headers = SHEET_COLUMNS['email_log']
+    campaign_id_col = headers.index('campaign_id')
+    
+    logs = []
+    for row in all_rows[1:]:
+        if len(row) > campaign_id_col and row[campaign_id_col] == campaign_id:
+            log_dict = _row_to_dict(headers, row)
+            # Adiciona nome da clínica do lead
+            lead = get_lead(log_dict.get('lead_id', ''))
+            log_dict['nome_clinica'] = lead.get('nome_clinica', '') if lead else ''
+            logs.append(log_dict)
+    
+    # Ordena por data de criação (mais recente primeiro)
+    logs.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+    return logs
 
 
 # === Blacklist Functions ===
 
 def add_to_blacklist(email: str, reason: str = "user_request"):
     """Adiciona email à blacklist"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            'INSERT OR IGNORE INTO blacklist (email, reason) VALUES (?, ?)',
-            (email.lower(), reason)
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        pass  # Email já existe na blacklist
-    conn.close()
+    if is_blacklisted(email):
+        return  # Já existe
+    
+    ws = get_worksheet('blacklist')
+    row = [
+        _generate_id(),
+        email.lower(),
+        reason,
+        _now_iso()
+    ]
+    ws.append_row(row)
 
 
 def is_blacklisted(email: str) -> bool:
     """Verifica se email está na blacklist"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT COUNT(*) FROM blacklist WHERE email = ?', 
-        (email.lower(),)
+    ws = get_worksheet('blacklist')
+    
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return False
+    
+    email_col = SHEET_COLUMNS['blacklist'].index('email')
+    email_lower = email.lower()
+    
+    return any(
+        len(row) > email_col and row[email_col] == email_lower 
+        for row in all_rows[1:]
     )
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count > 0
 
 
 def get_blacklist() -> List[Dict]:
     """Retorna todos os emails da blacklist"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM blacklist ORDER BY added_at DESC')
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    ws = get_worksheet('blacklist')
+    
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return []
+    
+    headers = SHEET_COLUMNS['blacklist']
+    items = [_row_to_dict(headers, row) for row in all_rows[1:]]
+    items.sort(key=lambda x: x.get('added_at', ''), reverse=True)
+    return items
 
 
 # === Duplicate/Recent Email Detection ===
@@ -368,24 +458,40 @@ def check_email_sent_recently(email: str, days: int = 180) -> Optional[Dict]:
     if not email:
         return None
     
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT el.*, l.nome_clinica, c.name as campaign_name
-        FROM email_log el
-        JOIN leads l ON el.lead_id = l.id
-        JOIN campaigns c ON el.campaign_id = c.id
-        WHERE el.email_to = ?
-        AND el.status = 'sent'
-        AND DATE(el.sent_at) >= DATE('now', '-' || ? || ' days')
-        ORDER BY el.sent_at DESC
-        LIMIT 1
-    ''', (email.lower(), days))
-    row = cursor.fetchone()
-    conn.close()
+    ws = get_worksheet('email_log')
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return None
     
-    if row:
-        return dict(row)
+    headers = SHEET_COLUMNS['email_log']
+    email_col = headers.index('email_to')
+    status_col = headers.index('status')
+    sent_at_col = headers.index('sent_at')
+    
+    cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+    email_lower = email.lower()
+    
+    matches = []
+    for row in all_rows[1:]:
+        if len(row) > max(email_col, status_col, sent_at_col):
+            if (row[email_col].lower() == email_lower and 
+                row[status_col] == 'sent' and
+                row[sent_at_col] >= cutoff_date):
+                matches.append(_row_to_dict(headers, row))
+    
+    if matches:
+        # Retorna o mais recente
+        matches.sort(key=lambda x: x.get('sent_at', ''), reverse=True)
+        result = matches[0]
+        
+        # Adiciona info do lead e campanha
+        lead = get_lead(result.get('lead_id', ''))
+        campaign = get_campaign(result.get('campaign_id', ''))
+        result['nome_clinica'] = lead.get('nome_clinica', '') if lead else ''
+        result['campaign_name'] = campaign.get('name', '') if campaign else ''
+        
+        return result
+    
     return None
 
 
@@ -402,19 +508,27 @@ def get_email_history(email: str) -> List[Dict]:
     if not email:
         return []
     
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT el.*, l.nome_clinica, c.name as campaign_name
-        FROM email_log el
-        JOIN leads l ON el.lead_id = l.id
-        JOIN campaigns c ON el.campaign_id = c.id
-        WHERE el.email_to = ?
-        ORDER BY el.sent_at DESC
-    ''', (email.lower(),))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    ws = get_worksheet('email_log')
+    all_rows = ws.get_all_values()
+    if len(all_rows) <= 1:
+        return []
+    
+    headers = SHEET_COLUMNS['email_log']
+    email_col = headers.index('email_to')
+    email_lower = email.lower()
+    
+    history = []
+    for row in all_rows[1:]:
+        if len(row) > email_col and row[email_col].lower() == email_lower:
+            log_dict = _row_to_dict(headers, row)
+            lead = get_lead(log_dict.get('lead_id', ''))
+            campaign = get_campaign(log_dict.get('campaign_id', ''))
+            log_dict['nome_clinica'] = lead.get('nome_clinica', '') if lead else ''
+            log_dict['campaign_name'] = campaign.get('name', '') if campaign else ''
+            history.append(log_dict)
+    
+    history.sort(key=lambda x: x.get('sent_at', ''), reverse=True)
+    return history
 
 
 def check_leads_for_duplicates(leads: List[Dict], days: int = 180) -> tuple:
