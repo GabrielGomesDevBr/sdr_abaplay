@@ -92,9 +92,20 @@ def get_spreadsheet():
     return _spreadsheet
 
 
-def get_worksheet(sheet_name: str):
-    """Retorna uma aba específica (com cache)"""
+def get_worksheet(sheet_name: str, fresh: bool = False):
+    """
+    Retorna uma aba específica (com cache)
+    
+    Args:
+        sheet_name: Nome da aba
+        fresh: Se True, força nova busca ignorando cache
+    """
     global _worksheets
+    
+    # Invalida cache se solicitado
+    if fresh and sheet_name in _worksheets:
+        del _worksheets[sheet_name]
+    
     if sheet_name not in _worksheets:
         spreadsheet = get_spreadsheet()
         try:
@@ -369,8 +380,12 @@ def get_email_attempts(lead_id: str) -> int:
 
 
 def get_emails_sent_today() -> int:
-    """Retorna número de emails enviados hoje"""
-    ws = get_worksheet('email_log')
+    """
+    Retorna número de emails enviados hoje.
+    SEMPRE busca dados frescos da planilha para garantir contagem precisa.
+    """
+    # Força refresh do cache para obter dados atualizados
+    ws = get_worksheet('email_log', fresh=True)
     
     all_rows = ws.get_all_values()
     if len(all_rows) <= 1:
