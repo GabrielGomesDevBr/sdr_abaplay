@@ -67,9 +67,12 @@ def is_within_work_hours() -> Tuple[bool, str]:
     return True, "Dentro do horário comercial"
 
 
-def can_send_email() -> Tuple[bool, str]:
+def can_send_email(daily_limit: int = DAILY_EMAIL_LIMIT) -> Tuple[bool, str]:
     """
     Verifica se podemos enviar mais emails hoje
+    
+    Args:
+        daily_limit: Limite diário configurável (default: DAILY_EMAIL_LIMIT)
     
     Returns:
         Tuple[can_send, message]
@@ -81,17 +84,22 @@ def can_send_email() -> Tuple[bool, str]:
     
     # Verifica limite diário
     sent_today = get_emails_sent_today()
-    if sent_today >= DAILY_EMAIL_LIMIT:
-        return False, f"Limite diário atingido: {sent_today}/{DAILY_EMAIL_LIMIT} emails"
+    if sent_today >= daily_limit:
+        return False, f"Limite diário atingido: {sent_today}/{daily_limit} emails"
     
-    remaining = DAILY_EMAIL_LIMIT - sent_today
+    remaining = daily_limit - sent_today
     return True, f"Pode enviar: {remaining} emails restantes hoje"
 
 
-def get_remaining_emails_today() -> int:
-    """Retorna quantos emails ainda podem ser enviados hoje"""
+def get_remaining_emails_today(daily_limit: int = DAILY_EMAIL_LIMIT) -> int:
+    """
+    Retorna quantos emails ainda podem ser enviados hoje
+    
+    Args:
+        daily_limit: Limite diário configurável (default: DAILY_EMAIL_LIMIT)
+    """
     sent_today = get_emails_sent_today()
-    return max(0, DAILY_EMAIL_LIMIT - sent_today)
+    return max(0, daily_limit - sent_today)
 
 
 def estimate_completion_time(emails_pending: int, email_count: int = 0) -> str:

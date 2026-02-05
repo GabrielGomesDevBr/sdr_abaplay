@@ -101,6 +101,8 @@ def init_session_state():
         st.session_state.duplicate_leads = []
     if 'approved_duplicates' not in st.session_state:
         st.session_state.approved_duplicates = []
+    if 'daily_limit' not in st.session_state:
+        st.session_state.daily_limit = DAILY_EMAIL_LIMIT
 
 
 def render_sidebar():
@@ -145,8 +147,15 @@ def render_sidebar():
         
         # Limite diário
         st.markdown("### 📊 Limite Diário")
-        remaining = get_remaining_emails_today()
-        st.metric("Emails Restantes Hoje", f"{remaining}/{DAILY_EMAIL_LIMIT}")
+        st.session_state.daily_limit = st.slider(
+            "Emails por dia",
+            min_value=1,
+            max_value=100,
+            value=st.session_state.daily_limit,
+            help="Ajuste o limite diário de envios"
+        )
+        remaining = get_remaining_emails_today(st.session_state.daily_limit)
+        st.metric("Emails Restantes Hoje", f"{remaining}/{st.session_state.daily_limit}")
         
         if remaining == 0:
             st.error("🚫 Limite diário atingido!")
@@ -330,7 +339,7 @@ def render_lead_queue():
     with col3:
         st.metric("❌ Descartados", discarded)
     with col4:
-        remaining_today = get_remaining_emails_today()
+        remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
         st.metric("📊 Restam Hoje", remaining_today)
     
     # Estimativa de tempo
@@ -392,7 +401,7 @@ def render_send_controls():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        can_send, send_msg = can_send_email()
+        can_send, send_msg = can_send_email(st.session_state.daily_limit)
         
         if st.session_state.sending_active:
             if st.button("⏸️ Pausar Envio", type="secondary", use_container_width=True):
@@ -456,7 +465,7 @@ def send_emails_with_delay():
         return
     
     # Verifica se pode enviar
-    can_send, send_msg = can_send_email()
+    can_send, send_msg = can_send_email(st.session_state.daily_limit)
     if not can_send:
         st.warning(f"⏳ {send_msg}")
         st.session_state.sending_active = False
