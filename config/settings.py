@@ -26,7 +26,7 @@ SENDER_EMAIL = _get_secret("SENDER_EMAIL", "")
 SENDER_NAME = _get_secret("SENDER_NAME", "ABAplay")
 
 # === Email Limits ===
-DAILY_EMAIL_LIMIT = 10  # Limite inicial para warmup
+DAILY_EMAIL_LIMIT = 20  # Limite padrão para envios diários
 MAX_ATTEMPTS_PER_LEAD = 2  # Máximo de tentativas por lead
 
 # === Schedule ===

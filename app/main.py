@@ -31,6 +31,31 @@ from app.llm_processor import (
 )
 
 
+# === Persistência de Configurações ===
+CONFIG_FILE = Path(__file__).parent.parent / "data" / "user_config.json"
+
+
+def load_user_config() -> dict:
+    """Carrega configurações do usuário do arquivo"""
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"daily_limit": DAILY_EMAIL_LIMIT}
+
+
+def save_user_config(config: dict):
+    """Salva configurações do usuário em arquivo"""
+    try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        pass
+
+
 # Configuração da página
 st.set_page_config(
     page_title="ABAplay Email Automation",
@@ -102,7 +127,9 @@ def init_session_state():
     if 'approved_duplicates' not in st.session_state:
         st.session_state.approved_duplicates = []
     if 'daily_limit' not in st.session_state:
-        st.session_state.daily_limit = DAILY_EMAIL_LIMIT
+        # Carrega do arquivo de configuração (persistente)
+        user_config = load_user_config()
+        st.session_state.daily_limit = user_config.get('daily_limit', DAILY_EMAIL_LIMIT)
 
 
 def render_sidebar():
@@ -145,15 +172,20 @@ def render_sidebar():
         
         st.divider()
         
-        # Limite diário
+        # Limite diário (persistente)
         st.markdown("### 📊 Limite Diário")
-        st.session_state.daily_limit = st.slider(
+        new_limit = st.slider(
             "Emails por dia",
             min_value=1,
             max_value=100,
             value=st.session_state.daily_limit,
-            help="Ajuste o limite diário de envios"
+            help="Ajuste o limite diário de envios (salvo automaticamente)"
         )
+        
+        # Salva se mudou
+        if new_limit != st.session_state.daily_limit:
+            st.session_state.daily_limit = new_limit
+            save_user_config({"daily_limit": new_limit})
         remaining = get_remaining_emails_today(st.session_state.daily_limit)
         st.metric("Emails Restantes Hoje", f"{remaining}/{st.session_state.daily_limit}")
         

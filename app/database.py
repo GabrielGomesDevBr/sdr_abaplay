@@ -383,9 +383,12 @@ def get_emails_sent_today() -> int:
     
     count = 0
     for row in all_rows[1:]:
-        if len(row) > max(status_col, sent_at_col):
-            if row[status_col] == 'sent' and row[sent_at_col].startswith(today):
-                count += 1
+        # Acesso seguro às colunas (trata linhas com células vazias no final)
+        status = row[status_col] if len(row) > status_col else ''
+        sent_at = row[sent_at_col] if len(row) > sent_at_col else ''
+        
+        if status == 'sent' and sent_at.startswith(today):
+            count += 1
     return count
 
 
