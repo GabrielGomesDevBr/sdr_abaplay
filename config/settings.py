@@ -47,6 +47,19 @@ BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 DESKTOP_PATH = Path(os.getenv("DESKTOP_PATH", Path.home() / "Área de Trabalho"))
 
+# === Gemini Configuration ===
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "")
+GEMINI_MODEL = _get_secret("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Modelos Gemini disponíveis para seleção na UI
+GEMINI_MODELS = {
+    "gemini-2.5-flash": "2.5 Flash (rápido, 1500 req/dia grátis)",
+    "gemini-2.5-flash-lite": "2.5 Flash-Lite (ultra rápido, 1500 req/dia grátis)",
+    "gemini-2.5-pro": "2.5 Pro (raciocínio avançado, 50 req/dia grátis)",
+    "gemini-3-pro-preview": "3.0 Pro (mais capaz, requer créditos)",
+    "gemini-3-flash-preview": "3.0 Flash (rápido, requer créditos)",
+}
+
 # === Database Configuration ===
 DATABASE_URL = _get_secret("DATABASE_URL", "")
 
@@ -187,6 +200,7 @@ def get_config_status() -> dict:
         'resend_api_key': bool(RESEND_API_KEY),
         'sender_email': bool(SENDER_EMAIL),
         'database_url': bool(DATABASE_URL),
+        'gemini_api_key': bool(GEMINI_API_KEY),
         'daily_limit': DAILY_EMAIL_LIMIT,
         'work_hours': f"{WORK_HOURS_START}h - {WORK_HOURS_END}h",
         'delay_mean': DELAY_MEAN,

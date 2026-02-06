@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.settings import DAILY_EMAIL_LIMIT, WORK_HOURS_START, WORK_HOURS_END
+from config.settings import DAILY_EMAIL_LIMIT, WORK_HOURS_START, WORK_HOURS_END, GEMINI_MODELS, GEMINI_MODEL
 from app.database import (
     init_database, create_campaign, update_campaign_stats,
     insert_lead, get_leads_by_campaign, get_email_log_by_campaign,
@@ -31,6 +31,7 @@ from app.llm_processor import (
     process_leads_with_llm_sync, generate_email_with_llm_sync, test_llm_connection
 )
 from app.data_viewer import render_data_viewer
+from app.gemini_prospector import prospect_leads, test_gemini_connection
 from app.ui_components import (
     inject_custom_css, render_header, render_metric_card, render_lead_card,
     render_progress_tracker, render_empty_state, render_success_message,
@@ -83,6 +84,7 @@ DEFAULT_SESSION_STATE = {
     'llm_insights': {},
     'duplicate_leads': [],
     'approved_duplicates': [],
+    'gemini_json_result': '',
 }
 
 
@@ -108,6 +110,7 @@ def render_status_panel():
         resend_ok, _ = test_connection()
 
     llm_ok, _ = test_llm_connection()
+    gemini_ok, _ = test_gemini_connection()
     within_hours, _ = is_within_work_hours()
     remaining = get_remaining_emails_today(st.session_state.daily_limit)
 
@@ -115,6 +118,7 @@ def render_status_panel():
     render_status_bar([
         {"label": "Resend API", "status": resend_ok},
         {"label": "LLM (GPT)", "status": llm_ok},
+        {"label": "Gemini", "status": gemini_ok},
         {"label": f"Horário ({WORK_HOURS_START}h-{WORK_HOURS_END}h)", "status": within_hours},
         {"label": f"Emails: {remaining}/{st.session_state.daily_limit}", "status": remaining > 0},
     ])
@@ -174,6 +178,12 @@ def render_settings_tab():
         else:
             st.warning(f"⚠️ LLM: {llm_message}")
 
+        gemini_success, gemini_message = test_gemini_connection()
+        if gemini_success:
+            st.success(f"✅ Gemini: {gemini_message}")
+        else:
+            st.warning(f"⚠️ Gemini: {gemini_message}")
+
         within_hours, hours_msg = is_within_work_hours()
         if within_hours:
             st.success(f"✅ Horário: {hours_msg}")
@@ -211,170 +221,267 @@ def render_settings_tab():
         """)
 
 
+def _process_leads_json(json_input: str):
+    """Processa JSON de leads (pipeline compartilhado entre modo Gemini e manual)."""
+    if not json_input:
+        st.warning("⚠️ Nenhum JSON de leads para processar")
+        return
+
+    try:
+        # Parse JSON
+        metadata, leads = parse_leads_json(json_input)
+
+        if st.session_state.use_llm:
+            # Processamento com LLM
+            with st.spinner("🧠 IA analisando leads..."):
+                llm_result = process_leads_with_llm_sync(
+                    json.dumps(leads, ensure_ascii=False),
+                    metadata.get('regiao_buscada', 'N/A')
+                )
+
+            if 'error' in llm_result and llm_result.get('error'):
+                st.warning(f"⚠️ Erro na IA, usando processamento padrão: {llm_result['error']}")
+                valid_leads, discarded_leads = process_leads(leads)
+            else:
+                # Converte resultado LLM para formato esperado
+                valid_leads = []
+                discarded_leads = []
+                processed_names = set()
+
+                # 1. Processa leads_processados (válidos e inválidos)
+                for proc_lead in llm_result.get('leads_processados', []):
+                    nome = proc_lead.get('nome_clinica')
+                    original = next(
+                        (l for l in leads if l.get('nome_clinica') == nome),
+                        None
+                    )
+                    if original:
+                        processed_names.add(nome)
+                        original['score'] = proc_lead.get('score', 50)
+                        original['llm_insights'] = proc_lead.get('insights', '')
+                        original['llm_abordagem'] = proc_lead.get('abordagem', 'generica')
+
+                        if proc_lead.get('deve_enviar', True):
+                            valid_leads.append(original)
+                        else:
+                            original['discard_reason'] = proc_lead.get('score_justificativa', 'Marcado pela IA para não enviar')
+                            discarded_leads.append(original)
+
+                # 2. Processa leads_descartados explicitamente pela IA
+                for disc_lead in llm_result.get('leads_descartados', []):
+                    nome = disc_lead.get('nome_clinica')
+                    if nome not in processed_names:
+                        original = next(
+                            (l for l in leads if l.get('nome_clinica') == nome),
+                            None
+                        )
+                        if original:
+                            processed_names.add(nome)
+                            original['discard_reason'] = disc_lead.get('motivo', 'Descartado pela IA')
+                            discarded_leads.append(original)
+
+                # 3. Captura leads que a IA não processou (evita perda de dados)
+                for lead in leads:
+                    nome = lead.get('nome_clinica')
+                    if nome and nome not in processed_names:
+                        lead['discard_reason'] = 'Não processado pela IA (possível timeout ou erro)'
+                        discarded_leads.append(lead)
+                        processed_names.add(nome)
+
+                # Ordena por score
+                valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)
+
+                st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados (total: {len(leads)})")
+        else:
+            # Processamento padrão
+            valid_leads, discarded_leads = process_leads(leads)
+
+        # === VERIFICAÇÃO DE DUPLICATAS (180 dias) ===
+        leads_novos, leads_duplicados = check_leads_for_duplicates(valid_leads, days=180)
+
+        if leads_duplicados:
+            st.warning(f"⚠️ {len(leads_duplicados)} lead(s) já foram contatados nos últimos 180 dias!")
+
+        # Cria campanha no banco
+        campaign_id = create_campaign(
+            name=f"Campanha {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            region=metadata.get('regiao_buscada', 'N/A')
+        )
+
+        # Insere leads novos no banco com status 'queued'
+        for lead in leads_novos:
+            lead['db_id'] = insert_lead(campaign_id, lead)
+            update_lead_status(lead['db_id'], 'queued')
+
+        # Insere também leads descartados no banco (dados valiosos mesmo sem email)
+        for lead in discarded_leads:
+            lead['db_id'] = insert_lead(campaign_id, lead)
+            update_lead_status(lead['db_id'], 'invalid', lead.get('discard_reason', ''))
+
+        # Atualiza session state
+        st.session_state.campaign_id = campaign_id
+        st.session_state.valid_leads = leads_novos
+        st.session_state.discarded_leads = discarded_leads
+        st.session_state.duplicate_leads = leads_duplicados
+        st.session_state.approved_duplicates = []
+        st.session_state.metadata = metadata
+        st.session_state.current_lead_index = 0
+        st.session_state.emails_sent_session = 0
+
+        # Atualiza estatísticas da campanha
+        update_campaign_stats(
+            campaign_id,
+            total_leads=len(leads_novos) + len(discarded_leads)
+        )
+
+        # Mensagem clara de conclusão
+        st.balloons()
+        render_success_message(
+            "Processamento Concluído!",
+            f"{len(leads_novos)} leads prontos para envio"
+        )
+        render_info_box(
+            "Resumo do Processamento",
+            [
+                f"🆕 {len(leads_novos)} leads novos prontos para envio",
+                f"⚠️ {len(leads_duplicados)} já contatados (aguardando aprovação)",
+                f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos no banco)",
+                "👉 Vá para a aba 'Fila de Envio' para continuar"
+            ],
+            "📊"
+        )
+        time.sleep(2)
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"❌ Erro ao processar: {str(e)}")
+
+
+def _clear_session():
+    """Limpa session state da campanha atual."""
+    st.session_state.campaign_id = None
+    st.session_state.valid_leads = []
+    st.session_state.discarded_leads = []
+    st.session_state.metadata = {}
+    st.session_state.current_lead_index = 0
+    st.session_state.sending_active = False
+    st.session_state.gemini_json_result = ''
+    st.rerun()
+
+
 def render_lead_input():
-    """Renderiza área de entrada de leads"""
+    """Renderiza área de entrada de leads com modo Gemini e manual"""
     st.markdown("## 📋 Entrada de Leads")
-    
+
     # Toggle para usar LLM
     st.session_state.use_llm = st.toggle(
         "🧠 Usar IA (GPT-5 mini) para processar leads",
         value=st.session_state.use_llm,
         help="Quando ativado, a IA analisa os leads e gera emails personalizados"
     )
-    
-    json_input = st.text_area(
-        "Cole o JSON de leads aqui:",
-        height=300,
-        placeholder='{"regiao_buscada": "Santos SP", "leads": [...]}'
+
+    # Seletor de modo de entrada
+    input_mode = st.radio(
+        "Origem dos leads:",
+        ["🔎 Buscar com Gemini", "📋 Colar JSON"],
+        horizontal=True,
+        help="Busque leads automaticamente via Gemini ou cole um JSON manualmente"
     )
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
-        if st.button(button_label, type="primary", width="stretch"):
-            if json_input:
-                try:
-                    # Parse JSON
-                    metadata, leads = parse_leads_json(json_input)
-                    
-                    if st.session_state.use_llm:
-                        # Processamento com LLM
-                        with st.spinner("🧠 IA analisando leads..."):
-                            llm_result = process_leads_with_llm_sync(
-                                json.dumps(leads, ensure_ascii=False),
-                                metadata.get('regiao_buscada', 'N/A')
-                            )
-                        
-                        if 'error' in llm_result and llm_result.get('error'):
-                            st.warning(f"⚠️ Erro na IA, usando processamento padrão: {llm_result['error']}")
-                            valid_leads, discarded_leads = process_leads(leads)
-                        else:
-                            # Converte resultado LLM para formato esperado
-                            valid_leads = []
-                            discarded_leads = []
-                            processed_names = set()  # Rastreia leads já processados
 
-                            # 1. Processa leads_processados (válidos e inválidos)
-                            for proc_lead in llm_result.get('leads_processados', []):
-                                nome = proc_lead.get('nome_clinica')
-                                original = next(
-                                    (l for l in leads if l.get('nome_clinica') == nome),
-                                    None
-                                )
-                                if original:
-                                    processed_names.add(nome)
-                                    original['score'] = proc_lead.get('score', 50)
-                                    original['llm_insights'] = proc_lead.get('insights', '')
-                                    original['llm_abordagem'] = proc_lead.get('abordagem', 'generica')
+    if input_mode == "🔎 Buscar com Gemini":
+        # === Modo Gemini: prospecção automática ===
+        st.markdown("### Busca Automática de Leads")
 
-                                    if proc_lead.get('deve_enviar', True):
-                                        valid_leads.append(original)
-                                    else:
-                                        # Lead processado mas marcado para não enviar
-                                        original['discard_reason'] = proc_lead.get('score_justificativa', 'Marcado pela IA para não enviar')
-                                        discarded_leads.append(original)
+        col_city, col_qty, col_model = st.columns([3, 1, 2])
 
-                            # 2. Processa leads_descartados explicitamente pela IA
-                            for disc_lead in llm_result.get('leads_descartados', []):
-                                nome = disc_lead.get('nome_clinica')
-                                if nome not in processed_names:
-                                    original = next(
-                                        (l for l in leads if l.get('nome_clinica') == nome),
-                                        None
-                                    )
-                                    if original:
-                                        processed_names.add(nome)
-                                        original['discard_reason'] = disc_lead.get('motivo', 'Descartado pela IA')
-                                        discarded_leads.append(original)
+        with col_city:
+            city = st.text_input(
+                "Cidade / Região",
+                placeholder="Ex: Santos SP, Campinas SP, Zona Sul RJ",
+                help="Informe a cidade ou região para buscar clínicas ABA"
+            )
 
-                            # 3. Captura leads que a IA não processou (evita perda de dados)
-                            for lead in leads:
-                                nome = lead.get('nome_clinica')
-                                if nome and nome not in processed_names:
-                                    lead['discard_reason'] = 'Não processado pela IA (possível timeout ou erro)'
-                                    discarded_leads.append(lead)
-                                    processed_names.add(nome)
+        with col_qty:
+            quantity = st.slider(
+                "Quantidade",
+                min_value=1,
+                max_value=10,
+                value=5,
+                help="Número de leads para buscar (1-10)"
+            )
 
-                            # Ordena por score
-                            valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)
+        with col_model:
+            model_ids = list(GEMINI_MODELS.keys())
+            default_idx = model_ids.index(GEMINI_MODEL) if GEMINI_MODEL in model_ids else 0
+            selected_model = st.selectbox(
+                "Modelo Gemini",
+                options=model_ids,
+                index=default_idx,
+                format_func=lambda x: GEMINI_MODELS.get(x, x),
+                help="Modelos com 'grátis' têm cota limitada. 3.0 Pro requer créditos."
+            )
 
-                            st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados (total: {len(leads)})")
-                    else:
-                        # Processamento padrão
-                        valid_leads, discarded_leads = process_leads(leads)
-                    
-                    # === VERIFICAÇÃO DE DUPLICATAS (180 dias) ===
-                    leads_novos, leads_duplicados = check_leads_for_duplicates(valid_leads, days=180)
-                    
-                    if leads_duplicados:
-                        st.warning(f"⚠️ {len(leads_duplicados)} lead(s) já foram contatados nos últimos 180 dias!")
-                    
-                    # Cria campanha no banco
-                    campaign_id = create_campaign(
-                        name=f"Campanha {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                        region=metadata.get('regiao_buscada', 'N/A')
-                    )
-                    
-                    # Insere leads novos no banco com status 'queued'
-                    for lead in leads_novos:
-                        lead['db_id'] = insert_lead(campaign_id, lead)
-                        update_lead_status(lead['db_id'], 'queued')
+        col_search, col_clear = st.columns(2)
 
-                    # Insere também leads descartados no banco (dados valiosos mesmo sem email)
-                    for lead in discarded_leads:
-                        lead['db_id'] = insert_lead(campaign_id, lead)
-                        update_lead_status(lead['db_id'], 'invalid', lead.get('discard_reason', ''))
+        with col_search:
+            if st.button("🔎 Buscar Leads", type="primary", disabled=not city, use_container_width=True):
+                with st.spinner(f"Buscando {quantity} clínicas ABA em {city}... (pode levar até 2 minutos)"):
+                    success, json_str, error = prospect_leads(city, quantity, model=selected_model)
 
-                    # Atualiza session state
-                    st.session_state.campaign_id = campaign_id
-                    st.session_state.valid_leads = leads_novos
-                    st.session_state.discarded_leads = discarded_leads
-                    st.session_state.duplicate_leads = leads_duplicados
-                    st.session_state.approved_duplicates = []
-                    st.session_state.metadata = metadata
-                    st.session_state.current_lead_index = 0
-                    st.session_state.emails_sent_session = 0
-                    
-                    # Atualiza estatísticas da campanha
-                    update_campaign_stats(
-                        campaign_id,
-                        total_leads=len(leads_novos) + len(discarded_leads)
-                    )
-                    
-                    # Mensagem clara de conclusão
-                    st.balloons()
-                    render_success_message(
-                        "Processamento Concluído!",
-                        f"{len(leads_novos)} leads prontos para envio"
-                    )
-                    render_info_box(
-                        "Resumo do Processamento",
-                        [
-                            f"🆕 {len(leads_novos)} leads novos prontos para envio",
-                            f"⚠️ {len(leads_duplicados)} já contatados (aguardando aprovação)",
-                            f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos no banco)",
-                            "👉 Vá para a aba 'Fila de Envio' para continuar"
-                        ],
-                        "📊"
-                    )
-                    time.sleep(2)  # Pequena pausa para ler a mensagem
+                if success:
+                    st.session_state.gemini_json_result = json_str
+                    data = json.loads(json_str)
+                    st.success(f"Encontrados {len(data.get('leads', []))} leads em {city}!")
                     st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Erro ao processar: {str(e)}")
-            else:
-                st.warning("⚠️ Cole o JSON de leads primeiro")
-    
-    with col2:
-        if st.button("🗑️ Limpar", width="stretch"):
-            st.session_state.campaign_id = None
-            st.session_state.valid_leads = []
-            st.session_state.discarded_leads = []
-            st.session_state.metadata = {}
-            st.session_state.current_lead_index = 0
-            st.session_state.sending_active = False
-            st.rerun()
+                else:
+                    st.error(f"Erro na busca: {error}")
+
+        with col_clear:
+            if st.button("🗑️ Limpar", use_container_width=True):
+                _clear_session()
+
+        # Textarea com resultado do Gemini (editável)
+        gemini_json = st.text_area(
+            "JSON de leads (editável):",
+            value=st.session_state.gemini_json_result,
+            height=300,
+            placeholder="O resultado da busca Gemini aparecerá aqui..."
+        )
+
+        # Preview do JSON
+        if st.session_state.gemini_json_result:
+            with st.expander("Visualizar leads encontrados", expanded=False):
+                try:
+                    st.json(json.loads(st.session_state.gemini_json_result))
+                except json.JSONDecodeError:
+                    st.warning("JSON inválido")
+
+        # Botão processar
+        button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
+        if st.button(button_label, type="primary", use_container_width=True, key="process_gemini"):
+            _process_leads_json(gemini_json)
+
+    else:
+        # === Modo manual: colar JSON ===
+        json_input = st.text_area(
+            "Cole o JSON de leads aqui:",
+            height=300,
+            placeholder='{"regiao_buscada": "Santos SP", "leads": [...]}'
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
+            if st.button(button_label, type="primary", use_container_width=True, key="process_manual"):
+                if json_input:
+                    _process_leads_json(json_input)
+                else:
+                    st.warning("⚠️ Cole o JSON de leads primeiro")
+
+        with col2:
+            if st.button("🗑️ Limpar", use_container_width=True, key="clear_manual"):
+                _clear_session()
 
 
 def render_lead_queue():

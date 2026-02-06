@@ -71,6 +71,7 @@ logger = setup_logger("abaplay", log_to_console=False)
 db_logger = setup_logger("abaplay.database", log_to_console=False)
 email_logger = setup_logger("abaplay.email", log_to_console=False)
 llm_logger = setup_logger("abaplay.llm", log_to_console=False)
+gemini_logger = setup_logger("abaplay.gemini", log_to_console=False)
 ui_logger = setup_logger("abaplay.ui", log_to_console=False)
 
 
@@ -87,6 +88,7 @@ def log_error(module: str, message: str, exception: Optional[Exception] = None):
         "database": db_logger,
         "email": email_logger,
         "llm": llm_logger,
+        "gemini": gemini_logger,
         "ui": ui_logger
     }.get(module, logger)
 
@@ -102,6 +104,7 @@ def log_warning(module: str, message: str):
         "database": db_logger,
         "email": email_logger,
         "llm": llm_logger,
+        "gemini": gemini_logger,
         "ui": ui_logger
     }.get(module, logger)
 
@@ -114,6 +117,7 @@ def log_info(module: str, message: str):
         "database": db_logger,
         "email": email_logger,
         "llm": llm_logger,
+        "gemini": gemini_logger,
         "ui": ui_logger
     }.get(module, logger)
 
@@ -126,6 +130,7 @@ def log_debug(module: str, message: str):
         "database": db_logger,
         "email": email_logger,
         "llm": llm_logger,
+        "gemini": gemini_logger,
         "ui": ui_logger
     }.get(module, logger)
 

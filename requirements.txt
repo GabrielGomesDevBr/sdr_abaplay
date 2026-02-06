@@ -11,3 +11,4 @@ openai>=1.10.0
 # gspread>=6.0.0        # Mantido para referência (migrado para PostgreSQL)
 # google-auth>=2.25.0   # Mantido para referência (migrado para PostgreSQL)
 psycopg2-binary>=2.9.0
+google-genai>=1.0.0
