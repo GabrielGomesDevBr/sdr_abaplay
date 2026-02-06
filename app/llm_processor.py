@@ -621,34 +621,68 @@ def extract_lead_data_for_prompt(lead: dict) -> dict:
     }
 
 
+def _get_fallback_email_body(nome_clinica: str) -> str:
+    """Retorna corpo de email fallback quando LLM falha ou timeout"""
+    return f"""Olá, equipe {nome_clinica}!
+
+Clínicas ABA perdem tempo com burocracia que poderia ser automatizada.
+
+O ABAplay resolve isso com registro de sessões pelo celular, gráficos automáticos e relatórios em 1 clique.
+
+Posso mostrar em 15 minutos?
+
+---
+Gabriel Gomes
+ABAplay | Gestão para Clínicas ABA
+(11) 98854-3437
+abaplay.app.br/info
+
+Responda REMOVER para sair da lista.
+---"""
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FUNÇÕES DE PROCESSAMENTO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def process_leads_with_llm(leads_json: str, regiao: str) -> Dict:
+async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 60) -> Dict:
     """
     Processa leads usando LLM para análise contextual
-    
+
     Args:
         leads_json: JSON string com os leads
         regiao: Região buscada
-        
+        timeout: Timeout em segundos (default: 60)
+
     Returns:
         Dict com leads processados, descartados e resumo
     """
+    import asyncio
+
     try:
         llm = get_llm()
         parser = JsonOutputParser()
-        
+
         chain = LEAD_PROCESSING_PROMPT | llm | parser
-        
-        result = await chain.ainvoke({
-            "regiao": regiao,
-            "leads_json": leads_json
-        })
-        
+
+        # Executa com timeout
+        result = await asyncio.wait_for(
+            chain.ainvoke({
+                "regiao": regiao,
+                "leads_json": leads_json
+            }),
+            timeout=timeout
+        )
+
         return result
-        
+
+    except asyncio.TimeoutError:
+        return {
+            "error": f"Timeout: LLM não respondeu em {timeout} segundos",
+            "leads_processados": [],
+            "leads_descartados": [],
+            "resumo": {"total_processados": 0, "total_validos": 0, "total_descartados": 0}
+        }
     except Exception as e:
         # Fallback: retorna erro para tratamento
         return {
@@ -672,81 +706,84 @@ def process_leads_with_llm_sync(leads_json: str, regiao: str) -> Dict:
     return loop.run_until_complete(process_leads_with_llm(leads_json, regiao))
 
 
-async def generate_email_for_enriched_lead(lead: dict) -> dict:
+async def generate_email_for_enriched_lead(lead: dict, timeout: int = 30) -> dict:
     """
     Gera email personalizado para lead enriquecido (v3.0).
-    
+
     Args:
         lead: Lead no novo formato com contexto_abordagem
-        
+        timeout: Timeout em segundos (default: 30)
+
     Returns:
         Dict com assunto e corpo do email
     """
+    import asyncio
+
     try:
         llm = get_llm()
         parser = JsonOutputParser()
         chain = EMAIL_GENERATION_PROMPT | llm | parser
-        
+
         # Extrai dados formatados
         prompt_data = extract_lead_data_for_prompt(lead)
-        
-        result = await chain.ainvoke(prompt_data)
+
+        # Executa com timeout
+        result = await asyncio.wait_for(
+            chain.ainvoke(prompt_data),
+            timeout=timeout
+        )
         return result
-        
+
+    except asyncio.TimeoutError:
+        # Fallback em caso de timeout
+        nome = lead.get('nome_clinica', 'Clínica')
+        return {
+            "assunto": f"{nome}: gestão ABA profissional",
+            "corpo": _get_fallback_email_body(nome),
+            "error": f"Timeout: LLM não respondeu em {timeout} segundos"
+        }
     except Exception as e:
         # Fallback
         nome = lead.get('nome_clinica', 'Clínica')
         return {
             "assunto": f"{nome}: gestão ABA profissional",
-            "corpo": f"""Olá, equipe {nome}!
-
-Clínicas ABA perdem tempo com burocracia que poderia ser automatizada.
-
-O ABAplay resolve isso com registro de sessões pelo celular, gráficos automáticos e relatórios em 1 clique.
-
-Posso mostrar em 15 minutos?
-
----
-Gabriel Gomes
-ABAplay | Gestão para Clínicas ABA
-(11) 98854-3437
-abaplay.app.br/info
-
-Responda REMOVER para sair da lista.
----""",
+            "corpo": _get_fallback_email_body(nome),
             "error": str(e)
         }
 
 
-async def generate_email_with_llm(lead: Dict, insights: str = "") -> Dict:
+async def generate_email_with_llm(lead: Dict, insights: str = "", timeout: int = 30) -> Dict:
     """
     Gera email personalizado usando LLM (compatibilidade com v2.0 e v3.0).
-    
+
     Detecta automaticamente se o lead possui contexto_abordagem e usa
     o prompt apropriado.
-    
+
     Args:
         lead: Dados do lead
         insights: Insights sobre o lead (usado se não houver contexto_abordagem)
-        
+        timeout: Timeout em segundos (default: 30)
+
     Returns:
         Dict com assunto e corpo do email
     """
+    import asyncio
+
     # Se tem contexto_abordagem, usa o novo sistema v3.0
     if lead.get('contexto_abordagem'):
-        return await generate_email_for_enriched_lead(lead)
-    
+        return await generate_email_for_enriched_lead(lead, timeout=timeout)
+
     # Fallback para leads sem enriquecimento (compatibilidade)
     try:
         llm = get_llm()
         parser = JsonOutputParser()
-        
+
         chain = EMAIL_GENERATION_PROMPT | llm | parser
-        
+
         # Extrai dados do lead (formato legado)
         decisor = lead.get('decisor', {})
         contatos = lead.get('contatos', {})
-        
+
         # Monta dados no formato esperado pelo novo prompt
         prompt_data = {
             "nome_clinica": lead.get('nome_clinica', 'Clínica'),
@@ -764,29 +801,27 @@ async def generate_email_with_llm(lead: Dict, insights: str = "") -> Dict:
             "tom_sugerido": 'neutro',
             "confianca": lead.get('confianca', 'media')
         }
-        
-        result = await chain.ainvoke(prompt_data)
+
+        # Executa com timeout
+        result = await asyncio.wait_for(
+            chain.ainvoke(prompt_data),
+            timeout=timeout
+        )
         return result
-        
+
+    except asyncio.TimeoutError:
+        nome_clinica = lead.get('nome_clinica', 'Clínica')
+        return {
+            "assunto": f"{nome_clinica}: gestão ABA profissional",
+            "corpo": _get_fallback_email_body(nome_clinica),
+            "error": f"Timeout: LLM não respondeu em {timeout} segundos"
+        }
     except Exception as e:
         # Fallback: retorna template básico
         nome_clinica = lead.get('nome_clinica', 'Clínica')
         return {
-            "assunto": f"{nome_clinica}: reduza glosas em até 90% com documentação padronizada",
-            "corpo": f"""Olá equipe {nome_clinica}!
-
-Clínicas ABA perdem em média 5-8% da receita por glosas. O ABAplay resolve isso.
-
-Posso mostrar em 15 minutos?
-
----
-Gabriel Gomes
-ABAplay | Gestão para Clínicas ABA
-(11) 98854-3437
-abaplay.app.br/info
-
-Responda REMOVER para sair da lista.
----""",
+            "assunto": f"{nome_clinica}: gestão ABA profissional",
+            "corpo": _get_fallback_email_body(nome_clinica),
             "error": str(e)
         }
 

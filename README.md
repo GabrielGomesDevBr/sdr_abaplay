@@ -154,11 +154,57 @@ email_abaplay_resend/
 │   └── settings.py          # Configurações centralizadas
 ├── data/
 │   └── email_automation.db  # Banco SQLite
+├── scripts/
+│   ├── add_leads.py         # Adicionar leads manualmente
+│   └── migrate_leads_sheet.py
 ├── requirements.txt
 ├── .env                     # Variáveis de ambiente (não versionado)
 ├── .env.example
 ├── .gitignore
 └── README.md
+```
+
+## 🔧 Scripts Utilitários
+
+### add_leads.py
+
+Script para adicionar leads manualmente na planilha com dados completos. Útil para:
+- Corrigir leads que não foram registrados
+- Importar leads de fontes externas
+- Migração de dados
+
+**Como módulo:**
+```python
+from scripts.add_leads import add_leads_to_sheet
+
+leads = [
+    {
+        "nome_clinica": "Clínica Exemplo",
+        "endereco": "Rua X, 123",
+        "cidade_uf": "São Paulo - SP",
+        "contatos": {
+            "email_principal": "contato@clinica.com",
+            "telefone": "(11) 1234-5678"
+        },
+        "decisor": {"nome": "Dr. João", "cargo": "Diretor"},
+        "contexto_abordagem": {
+            "resumo_clinica": "...",
+            "dor_provavel": "...",
+            "tom_sugerido": "consultivo"
+        }
+    }
+]
+
+stats = add_leads_to_sheet(leads, campaign_id="minha_campanha")
+print(f"Adicionados: {stats['added']}")
+```
+
+**Via JSON:**
+```python
+from scripts.add_leads import add_leads_from_json
+
+json_data = '{"leads": [...]}'
+add_leads_from_json(json_data, campaign_id="import_2024")
 ```
 
 ## 🛡️ Práticas Anti-Spam

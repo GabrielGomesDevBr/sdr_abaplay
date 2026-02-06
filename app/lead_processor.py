@@ -188,3 +188,71 @@ def extract_city_from_lead(lead: Dict) -> str:
     if ' - ' in cidade_uf:
         return cidade_uf.split(' - ')[0].strip()
     return cidade_uf
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPERS DRY - Funções auxiliares para extração de dados de leads
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_lead_email(lead: Dict) -> str:
+    """
+    Extrai email do lead independente da estrutura.
+
+    Suporta ambos os formatos:
+    - lead['contatos']['email_principal']
+    - lead['email_principal']
+
+    Returns:
+        Email do lead ou string vazia se não encontrado
+    """
+    return (
+        lead.get('contatos', {}).get('email_principal') or
+        lead.get('email_principal') or
+        ''
+    )
+
+
+def get_lead_phone(lead: Dict) -> str:
+    """
+    Extrai telefone do lead independente da estrutura.
+
+    Suporta ambos os formatos:
+    - lead['contatos']['telefone']
+    - lead['telefone']
+
+    Returns:
+        Telefone do lead ou string vazia se não encontrado
+    """
+    return (
+        lead.get('contatos', {}).get('telefone') or
+        lead.get('telefone') or
+        ''
+    )
+
+
+def get_lead_decisor(lead: Dict) -> Dict:
+    """
+    Extrai informações do decisor do lead.
+
+    Returns:
+        Dict com nome e cargo do decisor
+    """
+    decisor = lead.get('decisor', {})
+    return {
+        'nome': decisor.get('nome') or lead.get('decisor_nome', ''),
+        'cargo': decisor.get('cargo') or lead.get('decisor_cargo', '')
+    }
+
+
+def get_lead_address(lead: Dict) -> str:
+    """
+    Extrai endereço formatado do lead.
+
+    Returns:
+        Endereço completo ou string vazia
+    """
+    return (
+        lead.get('endereco', {}).get('completo') or
+        lead.get('endereco_completo') or
+        ''
+    )

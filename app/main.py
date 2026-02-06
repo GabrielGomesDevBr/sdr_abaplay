@@ -29,6 +29,12 @@ from app.report_generator import generate_campaign_report, generate_quick_summar
 from app.llm_processor import (
     process_leads_with_llm_sync, generate_email_with_llm_sync, test_llm_connection
 )
+from app.data_viewer import render_data_viewer
+from app.ui_components import (
+    inject_custom_css, render_header, render_metric_card, render_lead_card,
+    render_progress_tracker, render_empty_state, render_success_message,
+    render_info_box, render_status_bar, render_compact_metric
+)
 
 
 # === Persistência de Configurações ===
@@ -61,119 +67,71 @@ st.set_page_config(
     page_title="ABAplay Email Automation",
     page_icon="📧",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# CSS customizado
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1a365d;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 1rem;
-        color: white;
-        text-align: center;
-    }
-    .status-ok { color: #48bb78; font-weight: bold; }
-    .status-warning { color: #ecc94b; font-weight: bold; }
-    .status-error { color: #fc8181; font-weight: bold; }
-    .lead-card {
-        background: #f7fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 0.5rem;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
-    .score-badge {
-        background: #4299e1;
-        color: white;
-        padding: 0.25rem 0.75rem;
-        border-radius: 1rem;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Injeta CSS do design system
+inject_custom_css()
+
+
+# Session state defaults - facilita manutenção
+DEFAULT_SESSION_STATE = {
+    'campaign_id': None,
+    'valid_leads': [],
+    'discarded_leads': [],
+    'sending_active': False,
+    'emails_sent_session': 0,
+    'current_lead_index': 0,
+    'metadata': {},
+    'use_llm': True,
+    'llm_insights': {},
+    'duplicate_leads': [],
+    'approved_duplicates': [],
+}
 
 
 def init_session_state():
-    """Inicializa variáveis de sessão"""
-    if 'campaign_id' not in st.session_state:
-        st.session_state.campaign_id = None
-    if 'valid_leads' not in st.session_state:
-        st.session_state.valid_leads = []
-    if 'discarded_leads' not in st.session_state:
-        st.session_state.discarded_leads = []
-    if 'sending_active' not in st.session_state:
-        st.session_state.sending_active = False
-    if 'emails_sent_session' not in st.session_state:
-        st.session_state.emails_sent_session = 0
-    if 'current_lead_index' not in st.session_state:
-        st.session_state.current_lead_index = 0
-    if 'metadata' not in st.session_state:
-        st.session_state.metadata = {}
-    if 'use_llm' not in st.session_state:
-        st.session_state.use_llm = True
-    if 'llm_insights' not in st.session_state:
-        st.session_state.llm_insights = {}
-    if 'duplicate_leads' not in st.session_state:
-        st.session_state.duplicate_leads = []
-    if 'approved_duplicates' not in st.session_state:
-        st.session_state.approved_duplicates = []
+    """Inicializa variáveis de sessão usando valores padrão."""
+    # Inicializa valores padrão
+    for key, default in DEFAULT_SESSION_STATE.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+    # Carrega limite diário do arquivo de configuração (persistente)
     if 'daily_limit' not in st.session_state:
-        # Carrega do arquivo de configuração (persistente)
         user_config = load_user_config()
         st.session_state.daily_limit = user_config.get('daily_limit', DAILY_EMAIL_LIMIT)
 
 
-def render_sidebar():
-    """Renderiza barra lateral com status e configurações"""
-    with st.sidebar:
-        st.markdown("## ⚙️ Configurações")
-        
-        # Status da conexão
-        st.markdown("### 🔌 Status da Conexão")
-        sender_info = get_sender_info()
-        
-        if sender_info['configured']:
-            success, message = test_connection()
-            if success:
-                st.success(f"✅ {message}")
-            else:
-                st.error(f"❌ {message}")
-        else:
-            st.warning("⚠️ Configure SENDER_EMAIL no arquivo .env")
-        
-        # Status OpenAI
-        st.markdown("### 🧠 Status LLM (OpenAI)")
-        llm_success, llm_message = test_llm_connection()
-        if llm_success:
-            st.success(f"✅ {llm_message}")
-        else:
-            st.warning(f"⚠️ {llm_message}")
-        
-        st.divider()
-        
-        # Status do horário
-        st.markdown("### 🕐 Horário de Envio")
-        within_hours, hours_msg = is_within_work_hours()
-        if within_hours:
-            st.success(f"✅ {hours_msg}")
-        else:
-            st.warning(f"⏳ {hours_msg}")
-        
-        st.info(f"📅 Horário permitido: {WORK_HOURS_START}:00 - {WORK_HOURS_END}:00")
-        
-        st.divider()
-        
-        # Limite diário (persistente)
-        st.markdown("### 📊 Limite Diário")
+def render_status_panel():
+    """Renderiza painel de status integrado no topo da página"""
+    # Coleta status
+    sender_info = get_sender_info()
+    resend_ok = sender_info['configured']
+    if resend_ok:
+        resend_ok, _ = test_connection()
+
+    llm_ok, _ = test_llm_connection()
+    within_hours, _ = is_within_work_hours()
+    remaining = get_remaining_emails_today(st.session_state.daily_limit)
+
+    # Barra de status
+    render_status_bar([
+        {"label": "Resend API", "status": resend_ok},
+        {"label": "LLM (GPT)", "status": llm_ok},
+        {"label": f"Horário ({WORK_HOURS_START}h-{WORK_HOURS_END}h)", "status": within_hours},
+        {"label": f"Emails: {remaining}/{st.session_state.daily_limit}", "status": remaining > 0},
+    ])
+
+
+def render_settings_tab():
+    """Renderiza aba de configurações"""
+    st.markdown("## ⚙️ Configurações")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📊 Limite Diário de Envios")
         new_limit = st.slider(
             "Emails por dia",
             min_value=1,
@@ -181,37 +139,80 @@ def render_sidebar():
             value=st.session_state.daily_limit,
             help="Ajuste o limite diário de envios (salvo automaticamente)"
         )
-        
+
         # Salva se mudou
         if new_limit != st.session_state.daily_limit:
             st.session_state.daily_limit = new_limit
             save_user_config({"daily_limit": new_limit})
+
         remaining = get_remaining_emails_today(st.session_state.daily_limit)
-        st.metric("Emails Restantes Hoje", f"{remaining}/{st.session_state.daily_limit}")
-        
+
+        # Métricas de limite
+        metric_col1, metric_col2 = st.columns(2)
+        with metric_col1:
+            render_compact_metric(str(remaining), "Restantes Hoje", "📧", "success" if remaining > 0 else "error")
+        with metric_col2:
+            render_compact_metric(str(st.session_state.daily_limit), "Limite Total", "📊", "primary")
+
         if remaining == 0:
-            st.error("🚫 Limite diário atingido!")
-        
+            st.error("🚫 Limite diário atingido! Aguarde até amanhã para enviar mais emails.")
+
         st.divider()
-        
-        # Blacklist
-        st.markdown("### 🚫 Blacklist")
-        blacklist = get_blacklist()
-        st.metric("Emails bloqueados", len(blacklist))
-        
-        with st.expander("Ver blacklist"):
-            if blacklist:
-                for item in blacklist:
-                    st.text(f"• {item['email']}")
+
+        # Status das conexões
+        st.markdown("### 🔌 Status das Conexões")
+
+        sender_info = get_sender_info()
+        if sender_info['configured']:
+            success, message = test_connection()
+            if success:
+                st.success(f"✅ Resend: {message}")
             else:
-                st.text("Nenhum email na blacklist")
-        
+                st.error(f"❌ Resend: {message}")
+        else:
+            st.warning("⚠️ Configure SENDER_EMAIL no arquivo .env")
+
+        llm_success, llm_message = test_llm_connection()
+        if llm_success:
+            st.success(f"✅ LLM: {llm_message}")
+        else:
+            st.warning(f"⚠️ LLM: {llm_message}")
+
+        within_hours, hours_msg = is_within_work_hours()
+        if within_hours:
+            st.success(f"✅ Horário: {hours_msg}")
+        else:
+            st.warning(f"⏳ Horário: {hours_msg}")
+
+    with col2:
+        st.markdown("### 🚫 Blacklist")
+
+        blacklist = get_blacklist()
+        st.markdown(f"**{len(blacklist)}** emails bloqueados")
+
         # Adicionar à blacklist
-        new_blacklist = st.text_input("Adicionar email à blacklist")
-        if st.button("➕ Adicionar") and new_blacklist:
+        new_blacklist = st.text_input("Adicionar email à blacklist", placeholder="email@exemplo.com")
+        if st.button("➕ Adicionar à Blacklist", type="primary") and new_blacklist:
             add_to_blacklist(new_blacklist)
             st.success(f"✅ {new_blacklist} adicionado à blacklist")
             st.rerun()
+
+        # Lista de blacklist
+        with st.expander(f"Ver todos os {len(blacklist)} emails bloqueados"):
+            if blacklist:
+                for item in blacklist:
+                    st.markdown(f"• `{item['email']}`")
+            else:
+                st.info("Nenhum email na blacklist")
+
+        st.divider()
+
+        st.markdown("### 📅 Horário de Envio")
+        st.info(f"""
+        **Horário permitido:** {WORK_HOURS_START}:00 - {WORK_HOURS_END}:00
+
+        Os emails só são enviados durante o horário comercial para melhorar a taxa de abertura.
+        """)
 
 
 def render_lead_input():
@@ -235,7 +236,7 @@ def render_lead_input():
     
     with col1:
         button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
-        if st.button(button_label, type="primary", use_container_width=True):
+        if st.button(button_label, type="primary", width="stretch"):
             if json_input:
                 try:
                     # Parse JSON
@@ -256,32 +257,53 @@ def render_lead_input():
                             # Converte resultado LLM para formato esperado
                             valid_leads = []
                             discarded_leads = []
-                            
+                            processed_names = set()  # Rastreia leads já processados
+
+                            # 1. Processa leads_processados (válidos e inválidos)
                             for proc_lead in llm_result.get('leads_processados', []):
-                                # Encontra lead original
+                                nome = proc_lead.get('nome_clinica')
                                 original = next(
-                                    (l for l in leads if l.get('nome_clinica') == proc_lead.get('nome_clinica')),
-                                    None
-                                )
-                                if original and proc_lead.get('deve_enviar', True):
-                                    original['score'] = proc_lead.get('score', 50)
-                                    original['llm_insights'] = proc_lead.get('insights', '')
-                                    original['llm_abordagem'] = proc_lead.get('abordagem', 'generica')
-                                    valid_leads.append(original)
-                            
-                            for disc_lead in llm_result.get('leads_descartados', []):
-                                original = next(
-                                    (l for l in leads if l.get('nome_clinica') == disc_lead.get('nome_clinica')),
+                                    (l for l in leads if l.get('nome_clinica') == nome),
                                     None
                                 )
                                 if original:
-                                    original['discard_reason'] = disc_lead.get('motivo', 'Descartado pela IA')
-                                    discarded_leads.append(original)
-                            
+                                    processed_names.add(nome)
+                                    original['score'] = proc_lead.get('score', 50)
+                                    original['llm_insights'] = proc_lead.get('insights', '')
+                                    original['llm_abordagem'] = proc_lead.get('abordagem', 'generica')
+
+                                    if proc_lead.get('deve_enviar', True):
+                                        valid_leads.append(original)
+                                    else:
+                                        # Lead processado mas marcado para não enviar
+                                        original['discard_reason'] = proc_lead.get('score_justificativa', 'Marcado pela IA para não enviar')
+                                        discarded_leads.append(original)
+
+                            # 2. Processa leads_descartados explicitamente pela IA
+                            for disc_lead in llm_result.get('leads_descartados', []):
+                                nome = disc_lead.get('nome_clinica')
+                                if nome not in processed_names:
+                                    original = next(
+                                        (l for l in leads if l.get('nome_clinica') == nome),
+                                        None
+                                    )
+                                    if original:
+                                        processed_names.add(nome)
+                                        original['discard_reason'] = disc_lead.get('motivo', 'Descartado pela IA')
+                                        discarded_leads.append(original)
+
+                            # 3. Captura leads que a IA não processou (evita perda de dados)
+                            for lead in leads:
+                                nome = lead.get('nome_clinica')
+                                if nome and nome not in processed_names:
+                                    lead['discard_reason'] = 'Não processado pela IA (possível timeout ou erro)'
+                                    discarded_leads.append(lead)
+                                    processed_names.add(nome)
+
                             # Ordena por score
                             valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)
-                            
-                            st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados")
+
+                            st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados (total: {len(leads)})")
                     else:
                         # Processamento padrão
                         valid_leads, discarded_leads = process_leads(leads)
@@ -298,10 +320,14 @@ def render_lead_input():
                         region=metadata.get('regiao_buscada', 'N/A')
                     )
                     
-                    # Insere apenas leads novos no banco
+                    # Insere leads novos no banco
                     for lead in leads_novos:
                         lead['db_id'] = insert_lead(campaign_id, lead)
-                    
+
+                    # Insere também leads descartados no banco (dados valiosos mesmo sem email)
+                    for lead in discarded_leads:
+                        lead['db_id'] = insert_lead(campaign_id, lead)
+
                     # Atualiza session state
                     st.session_state.campaign_id = campaign_id
                     st.session_state.valid_leads = leads_novos
@@ -319,16 +345,21 @@ def render_lead_input():
                     )
                     
                     # Mensagem clara de conclusão
-                    st.success(f"✅ **PRONTO!** Processamento concluído.")
                     st.balloons()
-                    st.info(f"""
-📊 **Resumo do processamento:**
-- 🆕 **{len(leads_novos)}** leads novos prontos para envio
-- ⚠️ **{len(leads_duplicados)}** já contatados (aguardando sua aprovação)
-- ❌ **{len(discarded_leads)}** descartados (sem email válido)
-
-👉 **Vá para a aba "📊 Fila de Envio" para continuar.**
-                    """)
+                    render_success_message(
+                        "Processamento Concluído!",
+                        f"{len(leads_novos)} leads prontos para envio"
+                    )
+                    render_info_box(
+                        "Resumo do Processamento",
+                        [
+                            f"🆕 {len(leads_novos)} leads novos prontos para envio",
+                            f"⚠️ {len(leads_duplicados)} já contatados (aguardando aprovação)",
+                            f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos na planilha)",
+                            "👉 Vá para a aba 'Fila de Envio' para continuar"
+                        ],
+                        "📊"
+                    )
                     time.sleep(2)  # Pequena pausa para ler a mensagem
                     st.rerun()
                     
@@ -338,7 +369,7 @@ def render_lead_input():
                 st.warning("⚠️ Cole o JSON de leads primeiro")
     
     with col2:
-        if st.button("🗑️ Limpar", use_container_width=True):
+        if st.button("🗑️ Limpar", width="stretch"):
             st.session_state.campaign_id = None
             st.session_state.valid_leads = []
             st.session_state.discarded_leads = []
@@ -351,28 +382,28 @@ def render_lead_input():
 def render_lead_queue():
     """Renderiza fila de leads para envio"""
     if not st.session_state.valid_leads:
-        st.info("📭 Nenhum lead na fila. Cole um JSON de leads acima.")
+        render_empty_state("Nenhum lead na fila. Cole um JSON de leads na aba 'Nova Campanha'.", "📭")
         return
-    
+
     st.markdown("## 📬 Fila de Envio")
-    
-    # Métricas
-    col1, col2, col3, col4 = st.columns(4)
-    
+
+    # Métricas estilizadas
     total = len(st.session_state.valid_leads)
     sent = st.session_state.emails_sent_session
     pending = total - sent
     discarded = len(st.session_state.discarded_leads)
-    
+    remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
+
+    col1, col2, col3, col4 = st.columns(4)
+
     with col1:
-        st.metric("📋 Na Fila", pending)
+        render_metric_card(str(pending), "Na Fila", "📋", "primary")
     with col2:
-        st.metric("✅ Enviados", sent)
+        render_metric_card(str(sent), "Enviados", "✅", "success")
     with col3:
-        st.metric("❌ Descartados", discarded)
+        render_metric_card(str(discarded), "Descartados", "❌", "error")
     with col4:
-        remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
-        st.metric("📊 Restam Hoje", remaining_today)
+        render_metric_card(str(remaining_today), "Restam Hoje", "📊", "warning")
     
     # Estimativa de tempo
     if pending > 0:
@@ -381,46 +412,47 @@ def render_lead_queue():
     
     st.divider()
     
-    # Tabela de leads
+    # Progress tracker do envio
+    if sent > 0 or st.session_state.sending_active:
+        render_progress_tracker(
+            current_step=min(sent, total),
+            steps=[f"Lead {i+1}" for i in range(min(total, 5))] + (["..."] if total > 5 else [])
+        )
+
+    # Lista de leads com cards estilizados
     st.markdown("### 📋 Leads Ordenados por Score")
-    
+
     for i, lead in enumerate(st.session_state.valid_leads):
-        info = get_lead_display_info(lead)
-        
-        # Define cor baseado no status
+        # Define status do lead
         if i < st.session_state.current_lead_index:
-            status = "✅ Enviado"
-            bg_color = "#c6f6d5"
+            status_text = "sent"
         elif i == st.session_state.current_lead_index and st.session_state.sending_active:
-            status = "📤 Enviando..."
-            bg_color = "#fefcbf"
+            status_text = "pending"
         else:
-            status = "⏳ Pendente"
-            bg_color = "#f7fafc"
-        
-        with st.container():
-            cols = st.columns([0.5, 3, 3, 1.5, 1.5, 1])
-            
-            with cols[0]:
-                st.markdown(f"**#{i+1}**")
-            with cols[1]:
-                st.markdown(f"**{info['nome']}**")
-                st.caption(info['cidade'])
-            with cols[2]:
-                st.markdown(f"📧 {info['email']}")
-                st.caption(f"Tipo: {info['email_tipo']}")
-            with cols[3]:
-                st.markdown(f"👤 {info['decisor_nome']}")
-            with cols[4]:
-                st.markdown(f"<span class='score-badge'>Score: {info['score']}</span>", unsafe_allow_html=True)
-            with cols[5]:
-                st.markdown(status)
-            
+            status_text = "pending"
+
+        # Adiciona status ao lead para exibição
+        lead_display = lead.copy()
+        lead_display['_status'] = status_text
+        lead_display['_index'] = i + 1
+
+        # Card do lead
+        col_status, col_card = st.columns([0.5, 9.5])
+
+        with col_status:
+            if i < st.session_state.current_lead_index:
+                st.markdown("✅")
+            elif i == st.session_state.current_lead_index and st.session_state.sending_active:
+                st.markdown("📤")
+            else:
+                st.markdown(f"**{i+1}**")
+
+        with col_card:
+            render_lead_card(lead, show_details=True)
+
             # Mostra insights da IA se disponível
             if lead.get('llm_insights'):
                 st.caption(f"💡 IA: {lead.get('llm_insights')}")
-            
-            st.divider()
 
 
 def render_send_controls():
@@ -436,12 +468,12 @@ def render_send_controls():
         can_send, send_msg = can_send_email(st.session_state.daily_limit)
         
         if st.session_state.sending_active:
-            if st.button("⏸️ Pausar Envio", type="secondary", use_container_width=True):
+            if st.button("⏸️ Pausar Envio", type="secondary", width="stretch"):
                 st.session_state.sending_active = False
                 st.rerun()
         else:
             button_text = "▶️ Iniciar Envio (IA)" if st.session_state.use_llm else "▶️ Iniciar Envio"
-            if st.button(button_text, type="primary", use_container_width=True, disabled=not can_send):
+            if st.button(button_text, type="primary", width="stretch", disabled=not can_send):
                 if can_send:
                     st.session_state.sending_active = True
                     st.rerun()
@@ -454,7 +486,7 @@ def render_send_controls():
         if current_idx < len(st.session_state.valid_leads):
             current_lead = st.session_state.valid_leads[current_idx]
             preview_label = "🧠 Preview Email (IA)" if st.session_state.use_llm else "👁️ Preview Email"
-            if st.button(preview_label, use_container_width=True):
+            if st.button(preview_label, width="stretch"):
                 with st.spinner("🧠 Gerando email personalizado..." if st.session_state.use_llm else "Gerando preview..."):
                     email_preview = generate_email_preview(current_lead, use_llm=st.session_state.use_llm)
                 
@@ -468,7 +500,7 @@ def render_send_controls():
                     st.caption("💡 Este email foi gerado pela IA baseado nos insights do lead.")
     
     with col3:
-        if st.button("📄 Gerar Relatório PDF", use_container_width=True):
+        if st.button("📄 Gerar Relatório PDF", width="stretch"):
             if st.session_state.campaign_id:
                 try:
                     filepath = generate_campaign_report(
@@ -564,19 +596,31 @@ def render_discarded_leads():
     """Renderiza leads descartados"""
     if not st.session_state.discarded_leads:
         return
-    
-    with st.expander(f"🚫 Leads Descartados ({len(st.session_state.discarded_leads)})"):
+
+    with st.expander(f"🚫 Leads Descartados ({len(st.session_state.discarded_leads)})", expanded=False):
         for lead in st.session_state.discarded_leads:
-            st.markdown(f"**{lead.get('nome_clinica')}** - {lead.get('discard_reason', 'Motivo não especificado')}")
+            nome = lead.get('nome_clinica', 'N/A')
+            motivo = lead.get('discard_reason', 'Motivo não especificado')
+            st.markdown(f"**{nome}** — _{motivo}_")
 
 
 def render_duplicate_leads():
     """Renderiza leads que já foram contatados nos últimos 180 dias"""
     if not st.session_state.duplicate_leads:
         return
-    
-    st.markdown("## ⚠️ Leads Já Contatados (180 dias)")
-    st.warning(f"Os seguintes {len(st.session_state.duplicate_leads)} lead(s) já receberam email nos últimos 180 dias. Você pode aprovar manualmente se desejar reenviar.")
+
+    st.markdown("""
+    <div style="background: var(--warning-light); border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="font-size: 1.5rem;">⚠️</span>
+            <h3 style="margin: 0; color: var(--warning-dark);">Leads Já Contatados (180 dias)</h3>
+        </div>
+        <p style="margin: 0; color: var(--warning-dark);">
+            Os seguintes <strong>""" + str(len(st.session_state.duplicate_leads)) + """</strong> lead(s) já receberam email nos últimos 180 dias.
+            Você pode aprovar manualmente se desejar reenviar.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Botão para aprovar todos
     col1, col2 = st.columns([1, 4])
@@ -650,35 +694,54 @@ def main():
     """Função principal"""
     # Inicializa banco
     init_database()
-    
+
     # Inicializa session state
     init_session_state()
-    
-    # Título
-    st.markdown("<h1 class='main-header'>📧 ABAplay Email Automation</h1>", unsafe_allow_html=True)
-    
-    # Sidebar
-    render_sidebar()
-    
-    # Área principal
-    tab1, tab2, tab3 = st.tabs(["📋 Nova Campanha", "📊 Fila de Envio", "📜 Histórico"])
-    
+
+    # Header com estatísticas
+    remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
+    header_stats = {
+        "Enviados Hoje": st.session_state.emails_sent_session,
+        "Restantes": remaining_today,
+        "Limite": st.session_state.daily_limit
+    }
+    render_header(
+        title="📧 ABAplay Email Automation",
+        subtitle="Sistema inteligente de prospecção de clínicas ABA",
+        stats=header_stats
+    )
+
+    # Barra de status integrada
+    render_status_panel()
+
+    # Área principal com tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 Nova Campanha",
+        "📊 Fila de Envio",
+        "📈 Dados",
+        "📜 Histórico",
+        "⚙️ Configurações"
+    ])
+
     with tab1:
         render_lead_input()
-    
+
     with tab2:
-        render_duplicate_leads()  # Mostra leads já contatados primeiro
+        render_duplicate_leads()
         render_lead_queue()
         render_send_controls()
         render_discarded_leads()
-    
+
     with tab3:
+        render_data_viewer()
+
+    with tab4:
         st.markdown("## 📜 Histórico de Campanhas")
         if st.session_state.campaign_id:
             campaign = get_campaign(st.session_state.campaign_id)
             if campaign:
                 st.json(campaign)
-            
+
             logs = get_email_log_by_campaign(st.session_state.campaign_id)
             if logs:
                 st.markdown("### 📧 Log de Emails")
@@ -687,6 +750,9 @@ def main():
                     st.markdown(f"{status_emoji} **{log.get('nome_clinica')}** - {log['email_to']} - {log['status']}")
         else:
             st.info("Nenhuma campanha ativa")
+
+    with tab5:
+        render_settings_tab()
 
 
 if __name__ == "__main__":

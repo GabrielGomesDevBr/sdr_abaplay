@@ -2,19 +2,22 @@
 Integração com Resend API para envio de emails
 """
 import resend
+import time
 from typing import Dict, Tuple, Optional
 from datetime import datetime
+from functools import wraps
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.settings import RESEND_API_KEY, SENDER_EMAIL, SENDER_NAME
+from config.settings import RESEND_API_KEY, SENDER_EMAIL, SENDER_NAME, API_RETRY_ATTEMPTS
 from app.database import (
     log_email_attempt, update_email_status, get_email_attempts,
     is_blacklisted, add_to_blacklist
 )
 from app.template_engine import personalize_template
+from app.lead_processor import get_lead_email
 from config.settings import MAX_ATTEMPTS_PER_LEAD
 
 
@@ -22,34 +25,102 @@ from config.settings import MAX_ATTEMPTS_PER_LEAD
 resend.api_key = RESEND_API_KEY
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RETRY DECORATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def with_retry(max_attempts: int = 3, base_delay: float = 2.0):
+    """
+    Decorator para retry automático com backoff exponencial.
+
+    Args:
+        max_attempts: Número máximo de tentativas
+        base_delay: Delay base em segundos (multiplica a cada tentativa)
+
+    Example:
+        @with_retry(max_attempts=3, base_delay=2.0)
+        def send_api_call():
+            ...
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        delay = base_delay * (attempt + 1)  # Backoff linear
+                        time.sleep(delay)
+
+            # Se todas as tentativas falharam, levanta a última exceção
+            raise last_exception
+        return wrapper
+    return decorator
+
+
+@with_retry(max_attempts=API_RETRY_ATTEMPTS, base_delay=2.0)
+def _send_via_resend(email_to: str, subject: str, body: str,
+                     campaign_id: int, lead_id: int) -> Dict:
+    """
+    Envia email via API Resend com retry automático.
+
+    Args:
+        email_to: Email do destinatário
+        subject: Assunto do email
+        body: Corpo do email
+        campaign_id: ID da campanha
+        lead_id: ID do lead
+
+    Returns:
+        Response da API Resend
+
+    Raises:
+        Exception se todas as tentativas falharem
+    """
+    return resend.Emails.send({
+        "from": f"{SENDER_NAME} <{SENDER_EMAIL}>",
+        "to": [email_to],
+        "subject": subject,
+        "text": body,
+        "headers": {
+            "List-Unsubscribe": f"<mailto:{SENDER_EMAIL}?subject=REMOVER>",
+            "X-Entity-Ref-ID": f"campaign-{campaign_id}-lead-{lead_id}"
+        }
+    })
+
+
 def send_email(lead: Dict, campaign_id: int, lead_id: int, use_llm: bool = False) -> Tuple[bool, str, Optional[str]]:
     """
-    Envia email para um lead usando Resend
-    
+    Envia email para um lead usando Resend com retry automático.
+
     Args:
         lead: Dados do lead
         campaign_id: ID da campanha
         lead_id: ID do lead no banco
         use_llm: Se True, gera email personalizado com IA
-        
+
     Returns:
         Tuple[success, message, resend_id]
     """
-    # Extrai email do lead
-    email_to = lead.get('contatos', {}).get('email_principal') or lead.get('email_principal')
-    
+    # Extrai email usando helper DRY
+    email_to = get_lead_email(lead)
+
     if not email_to:
         return False, "Lead sem email", None
-    
+
     # Verifica blacklist
     if is_blacklisted(email_to):
         return False, "Email na blacklist", None
-    
+
     # Verifica número de tentativas
     attempts = get_email_attempts(lead_id)
     if attempts >= MAX_ATTEMPTS_PER_LEAD:
         return False, f"Limite de tentativas atingido ({attempts}/{MAX_ATTEMPTS_PER_LEAD})", None
-    
+
     # Gera conteúdo do email
     if use_llm:
         # Usa IA para gerar email personalizado
@@ -63,7 +134,7 @@ def send_email(lead: Dict, campaign_id: int, lead_id: int, use_llm: bool = False
     else:
         # Usa template padrão
         email_content = personalize_template(lead)
-    
+
     # Registra tentativa no banco
     log_id = log_email_attempt(
         lead_id=lead_id,
@@ -72,37 +143,34 @@ def send_email(lead: Dict, campaign_id: int, lead_id: int, use_llm: bool = False
         subject=email_content['assunto'],
         attempt_number=attempts + 1
     )
-    
+
     try:
         # Verifica configuração
         if not RESEND_API_KEY:
             update_email_status(log_id, 'failed', error_message="API key não configurada")
             return False, "API key do Resend não configurada", None
-        
+
         if not SENDER_EMAIL:
             update_email_status(log_id, 'failed', error_message="Email remetente não configurado")
             return False, "Email do remetente não configurado", None
-        
-        # Envia via Resend
-        response = resend.Emails.send({
-            "from": f"{SENDER_NAME} <{SENDER_EMAIL}>",
-            "to": [email_to],
-            "subject": email_content['assunto'],
-            "text": email_content['corpo'],
-            "headers": {
-                "List-Unsubscribe": f"<mailto:{SENDER_EMAIL}?subject=REMOVER>",
-                "X-Entity-Ref-ID": f"campaign-{campaign_id}-lead-{lead_id}"
-            }
-        })
-        
+
+        # Envia via Resend com retry automático
+        response = _send_via_resend(
+            email_to=email_to,
+            subject=email_content['assunto'],
+            body=email_content['corpo'],
+            campaign_id=campaign_id,
+            lead_id=lead_id
+        )
+
         # Extrai ID do Resend
         resend_id = response.get('id') if isinstance(response, dict) else str(response)
-        
+
         # Atualiza status no banco
         update_email_status(log_id, 'sent', resend_id=resend_id)
-        
+
         return True, f"Email enviado com sucesso (ID: {resend_id})", resend_id
-        
+
     except Exception as e:
         error_message = str(e)
         update_email_status(log_id, 'failed', error_message=error_message)

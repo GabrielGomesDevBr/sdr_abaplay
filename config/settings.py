@@ -126,3 +126,81 @@ Se não deseja receber mais emails, responda com "REMOVER".
 
 # === Unsubscribe ===
 UNSUBSCRIBE_KEYWORDS = ['remover', 'unsubscribe', 'descadastrar', 'não quero', 'pare']
+
+# === Timeouts ===
+LLM_TIMEOUT_SECONDS = 60  # Timeout para processamento de leads
+LLM_EMAIL_TIMEOUT_SECONDS = 30  # Timeout para geração de email
+API_RETRY_ATTEMPTS = 3
+
+# === Cache TTLs (segundos) ===
+BLACKLIST_CACHE_TTL = 300  # 5 minutos
+DAILY_COUNT_CACHE_TTL = 60  # 1 minuto
+
+# === UI Constants ===
+UI_FEEDBACK_DELAY = 2  # Segundos para feedback visual
+MAX_PREVIEW_LENGTH = 500  # Caracteres no preview
+LEADS_PER_PAGE = 20
+
+
+class ConfigurationError(Exception):
+    """Erro de configuração da aplicação"""
+    pass
+
+
+def validate_config() -> list:
+    """
+    Valida configurações obrigatórias.
+
+    Returns:
+        Lista de erros (vazia se tudo OK)
+    """
+    errors = []
+
+    # Verifica API keys obrigatórias
+    if not RESEND_API_KEY:
+        errors.append("RESEND_API_KEY não configurada no .env")
+
+    if not SENDER_EMAIL:
+        errors.append("SENDER_EMAIL não configurado no .env")
+
+    if not GOOGLE_SHEETS_SPREADSHEET_ID:
+        errors.append("GOOGLE_SHEETS_SPREADSHEET_ID não configurado no .env")
+
+    # Verifica formato da API key do Resend
+    if RESEND_API_KEY and not RESEND_API_KEY.startswith('re_'):
+        errors.append("RESEND_API_KEY com formato inválido (deve começar com 're_')")
+
+    # Verifica se credenciais do Google existem
+    creds_path = Path(GOOGLE_SHEETS_CREDENTIALS_PATH)
+    if not creds_path.is_absolute():
+        creds_path = BASE_DIR / GOOGLE_SHEETS_CREDENTIALS_PATH
+
+    if not creds_path.exists():
+        # Verifica se há credenciais no Streamlit secrets ou env
+        import os
+        if not os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON"):
+            try:
+                import streamlit as st
+                if "GOOGLE_SHEETS_CREDENTIALS" not in st.secrets:
+                    errors.append(f"Credenciais do Google não encontradas em {creds_path}")
+            except:
+                errors.append(f"Credenciais do Google não encontradas em {creds_path}")
+
+    return errors
+
+
+def get_config_status() -> dict:
+    """
+    Retorna status das configurações para exibição.
+
+    Returns:
+        Dict com status de cada configuração
+    """
+    return {
+        'resend_api_key': bool(RESEND_API_KEY),
+        'sender_email': bool(SENDER_EMAIL),
+        'google_sheets_id': bool(GOOGLE_SHEETS_SPREADSHEET_ID),
+        'daily_limit': DAILY_EMAIL_LIMIT,
+        'work_hours': f"{WORK_HOURS_START}h - {WORK_HOURS_END}h",
+        'delay_mean': DELAY_MEAN,
+    }

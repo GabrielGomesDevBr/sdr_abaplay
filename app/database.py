@@ -13,9 +13,14 @@ import os
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import (
-    GOOGLE_SHEETS_SPREADSHEET_ID, 
+    GOOGLE_SHEETS_SPREADSHEET_ID,
     GOOGLE_SHEETS_CREDENTIALS_PATH,
     BASE_DIR
+)
+from app.cache import (
+    get_blacklist_cache, set_blacklist_cache, is_blacklist_cache_valid,
+    invalidate_blacklist_cache, get_daily_count_cache, set_daily_count_cache,
+    increment_daily_count_cache, invalidate_daily_count_cache
 )
 
 # === Google Sheets Connection ===
@@ -315,12 +320,14 @@ def get_lead(lead_id: str) -> Optional[Dict]:
 
 # === Email Log Functions ===
 
-def log_email_attempt(lead_id: str, campaign_id: str, email_to: str, 
+def log_email_attempt(lead_id: str, campaign_id: str, email_to: str,
                       subject: str, attempt_number: int = 1) -> str:
     """Registra tentativa de envio de email"""
-    ws = get_worksheet('email_log')
+    # IMPORTANTE: Usar fresh=True e insert_row em posição específica para evitar
+    # race condition em envios sequenciais. append_row em sequência rápida perde dados.
+    ws = get_worksheet('email_log', fresh=True)
     log_id = _generate_id()
-    
+
     row = [
         log_id,
         lead_id,
@@ -334,36 +341,49 @@ def log_email_attempt(lead_id: str, campaign_id: str, email_to: str,
         '',  # sent_at
         _now_iso()
     ]
-    ws.append_row(row)
+
+    # Calcula próxima linha disponível (mais confiável que append_row)
+    all_values = ws.get_all_values()
+    next_row = len(all_values) + 1
+    ws.insert_row(row, next_row)
+
     return log_id
 
 
-def update_email_status(log_id: str, status: str, resend_id: str = None, 
+def update_email_status(log_id: str, status: str, resend_id: str = None,
                         error_message: str = None):
-    """Atualiza status do email enviado"""
+    """Atualiza status do email enviado e incrementa cache se enviado com sucesso"""
     ws = get_worksheet('email_log')
-    
+
     try:
         cell = ws.find(log_id)
         if not cell:
             return
-        
+
         row_num = cell.row
         headers = SHEET_COLUMNS['email_log']
-        
+
         # Atualiza status
         ws.update_cell(row_num, headers.index('status') + 1, status)
-        
+
         if resend_id:
             ws.update_cell(row_num, headers.index('resend_id') + 1, resend_id)
-        
+
         if error_message:
             ws.update_cell(row_num, headers.index('error_message') + 1, error_message)
-        
+
         # Atualiza sent_at
         ws.update_cell(row_num, headers.index('sent_at') + 1, _now_iso())
-    except Exception:
-        pass
+
+        # Incrementa cache da contagem diária se enviado com sucesso
+        if status == 'sent':
+            increment_daily_count_cache()
+
+    except gspread.exceptions.APIError as e:
+        # Log do erro (será melhorado na Fase 2)
+        print(f"Erro ao atualizar status do email: {e}")
+    except Exception as e:
+        print(f"Erro inesperado: {e}")
 
 
 def get_email_attempts(lead_id: str) -> int:
@@ -382,28 +402,37 @@ def get_email_attempts(lead_id: str) -> int:
 def get_emails_sent_today() -> int:
     """
     Retorna número de emails enviados hoje.
-    SEMPRE busca dados frescos da planilha para garantir contagem precisa.
+    Usa cache em memória com TTL de 1 minuto para reduzir chamadas à API.
     """
-    # Força refresh do cache para obter dados atualizados
+    # Verifica cache primeiro
+    cached_count = get_daily_count_cache()
+    if cached_count is not None:
+        return cached_count
+
+    # Cache expirado, recalcula
     ws = get_worksheet('email_log', fresh=True)
-    
+
     all_rows = ws.get_all_values()
     if len(all_rows) <= 1:
+        set_daily_count_cache(0)
         return 0
-    
+
     headers = SHEET_COLUMNS['email_log']
     status_col = headers.index('status')
     sent_at_col = headers.index('sent_at')
     today = datetime.now().strftime('%Y-%m-%d')
-    
+
     count = 0
     for row in all_rows[1:]:
         # Acesso seguro às colunas (trata linhas com células vazias no final)
         status = row[status_col] if len(row) > status_col else ''
         sent_at = row[sent_at_col] if len(row) > sent_at_col else ''
-        
+
         if status == 'sent' and sent_at.startswith(today):
             count += 1
+
+    # Atualiza cache
+    set_daily_count_cache(count)
     return count
 
 
@@ -435,10 +464,10 @@ def get_email_log_by_campaign(campaign_id: str) -> List[Dict]:
 # === Blacklist Functions ===
 
 def add_to_blacklist(email: str, reason: str = "user_request"):
-    """Adiciona email à blacklist"""
+    """Adiciona email à blacklist e invalida cache"""
     if is_blacklisted(email):
         return  # Já existe
-    
+
     ws = get_worksheet('blacklist')
     row = [
         _generate_id(),
@@ -446,24 +475,48 @@ def add_to_blacklist(email: str, reason: str = "user_request"):
         reason,
         _now_iso()
     ]
+
+    # Invalida cache para forçar refresh na próxima verificação
+    invalidate_blacklist_cache()
     ws.append_row(row)
 
 
 def is_blacklisted(email: str) -> bool:
-    """Verifica se email está na blacklist"""
+    """
+    Verifica se email está na blacklist.
+    Usa cache em memória para evitar chamadas repetidas à API.
+    """
+    if not email:
+        return False
+
+    email_lower = email.lower()
+
+    # Verifica cache primeiro
+    if is_blacklist_cache_valid():
+        cached = get_blacklist_cache()
+        if cached:
+            return email_lower in cached
+
+    # Cache expirado ou vazio, recarrega da planilha
     ws = get_worksheet('blacklist')
-    
+
     all_rows = ws.get_all_values()
     if len(all_rows) <= 1:
+        set_blacklist_cache(set())
         return False
-    
+
     email_col = SHEET_COLUMNS['blacklist'].index('email')
-    email_lower = email.lower()
-    
-    return any(
-        len(row) > email_col and row[email_col] == email_lower 
-        for row in all_rows[1:]
-    )
+
+    # Carrega todos os emails em um set para cache
+    blacklist_emails = set()
+    for row in all_rows[1:]:
+        if len(row) > email_col and row[email_col]:
+            blacklist_emails.add(row[email_col].lower())
+
+    # Atualiza cache
+    set_blacklist_cache(blacklist_emails)
+
+    return email_lower in blacklist_emails
 
 
 def get_blacklist() -> List[Dict]:
@@ -571,25 +624,79 @@ def get_email_history(email: str) -> List[Dict]:
 
 def check_leads_for_duplicates(leads: List[Dict], days: int = 180) -> tuple:
     """
-    Verifica uma lista de leads para encontrar duplicatas recentes
-    
+    Verifica uma lista de leads para encontrar duplicatas recentes.
+    OTIMIZADO: Carrega email_log uma única vez e verifica todos em memória.
+
     Args:
         leads: Lista de leads para verificar
         days: Período em dias para considerar duplicata
-        
+
     Returns:
         Tuple (leads_novos, leads_duplicados)
         leads_duplicados inclui 'last_sent_info' com detalhes do último envio
     """
     leads_novos = []
     leads_duplicados = []
-    
+
+    # Carrega email_log UMA VEZ para todos os leads
+    ws = get_worksheet('email_log', fresh=True)
+    all_rows = ws.get_all_values()
+
+    if len(all_rows) <= 1:
+        # Nenhum email enviado ainda, todos são novos
+        for lead in leads:
+            lead['is_duplicate'] = False
+            leads_novos.append(lead)
+        return leads_novos, leads_duplicados
+
+    # Prepara índices e dados
+    headers = SHEET_COLUMNS['email_log']
+    email_col = headers.index('email_to')
+    status_col = headers.index('status')
+    sent_at_col = headers.index('sent_at')
+    cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+    # Constrói mapa de emails enviados recentemente (email_lower -> info)
+    recent_sends: Dict[str, Dict] = {}
+    for row in all_rows[1:]:
+        if len(row) > max(email_col, status_col, sent_at_col):
+            email_lower = row[email_col].lower()
+            status = row[status_col]
+            sent_at = row[sent_at_col]
+
+            if status == 'sent' and sent_at >= cutoff_date:
+                # Guarda o mais recente para cada email
+                if email_lower not in recent_sends or sent_at > recent_sends[email_lower].get('sent_at', ''):
+                    recent_sends[email_lower] = _row_to_dict(headers, row)
+
+    # Pré-carrega leads e campanhas para os duplicados (batch)
+    leads_cache = {}
+    campaigns_cache = {}
+
+    # Verifica cada lead
     for lead in leads:
         email = lead.get('contatos', {}).get('email_principal') or lead.get('email_principal')
-        
+
         if email:
-            last_sent = check_email_sent_recently(email, days)
+            email_lower = email.lower()
+            last_sent = recent_sends.get(email_lower)
+
             if last_sent:
+                # Adiciona info de lead e campanha (com cache)
+                lead_id = last_sent.get('lead_id', '')
+                campaign_id = last_sent.get('campaign_id', '')
+
+                if lead_id and lead_id not in leads_cache:
+                    leads_cache[lead_id] = get_lead(lead_id)
+                if campaign_id and campaign_id not in campaigns_cache:
+                    campaigns_cache[campaign_id] = get_campaign(campaign_id)
+
+                cached_lead = leads_cache.get(lead_id)
+                cached_campaign = campaigns_cache.get(campaign_id)
+
+                last_sent['nome_clinica'] = cached_lead.get('nome_clinica', '') if cached_lead else ''
+                last_sent['campaign_name'] = cached_campaign.get('name', '') if cached_campaign else ''
+
                 lead['last_sent_info'] = last_sent
                 lead['is_duplicate'] = True
                 leads_duplicados.append(lead)
@@ -599,7 +706,7 @@ def check_leads_for_duplicates(leads: List[Dict], days: int = 180) -> tuple:
         else:
             lead['is_duplicate'] = False
             leads_novos.append(lead)
-    
+
     return leads_novos, leads_duplicados
 
 
