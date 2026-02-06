@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import RESEND_API_KEY, SENDER_EMAIL, SENDER_NAME, API_RETRY_ATTEMPTS
 from app.database import (
     log_email_attempt, update_email_status, get_email_attempts,
-    is_blacklisted, add_to_blacklist
+    is_blacklisted, add_to_blacklist, update_lead_status
 )
 from app.template_engine import personalize_template
 from app.lead_processor import get_lead_email
@@ -135,13 +135,14 @@ def send_email(lead: Dict, campaign_id: int, lead_id: int, use_llm: bool = False
         # Usa template padrão
         email_content = personalize_template(lead)
 
-    # Registra tentativa no banco
+    # Registra tentativa no banco (com corpo do email)
     log_id = log_email_attempt(
         lead_id=lead_id,
         campaign_id=campaign_id,
         email_to=email_to,
         subject=email_content['assunto'],
-        attempt_number=attempts + 1
+        attempt_number=attempts + 1,
+        body_html=email_content.get('corpo', '')
     )
 
     try:
@@ -168,6 +169,9 @@ def send_email(lead: Dict, campaign_id: int, lead_id: int, use_llm: bool = False
 
         # Atualiza status no banco
         update_email_status(log_id, 'sent', resend_id=resend_id)
+
+        # Atualiza status do lead para 'contacted'
+        update_lead_status(lead_id, 'contacted')
 
         return True, f"Email enviado com sucesso (ID: {resend_id})", resend_id
 

@@ -47,7 +47,10 @@ BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 DESKTOP_PATH = Path(os.getenv("DESKTOP_PATH", Path.home() / "Área de Trabalho"))
 
-# === Google Sheets Configuration ===
+# === Database Configuration ===
+DATABASE_URL = _get_secret("DATABASE_URL", "")
+
+# === Google Sheets Configuration (mantido para migração) ===
 GOOGLE_SHEETS_SPREADSHEET_ID = _get_secret("GOOGLE_SHEETS_SPREADSHEET_ID", "")
 GOOGLE_SHEETS_CREDENTIALS_PATH = _get_secret("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json")
 
@@ -163,28 +166,12 @@ def validate_config() -> list:
     if not SENDER_EMAIL:
         errors.append("SENDER_EMAIL não configurado no .env")
 
-    if not GOOGLE_SHEETS_SPREADSHEET_ID:
-        errors.append("GOOGLE_SHEETS_SPREADSHEET_ID não configurado no .env")
+    if not DATABASE_URL:
+        errors.append("DATABASE_URL não configurada no .env")
 
     # Verifica formato da API key do Resend
     if RESEND_API_KEY and not RESEND_API_KEY.startswith('re_'):
         errors.append("RESEND_API_KEY com formato inválido (deve começar com 're_')")
-
-    # Verifica se credenciais do Google existem
-    creds_path = Path(GOOGLE_SHEETS_CREDENTIALS_PATH)
-    if not creds_path.is_absolute():
-        creds_path = BASE_DIR / GOOGLE_SHEETS_CREDENTIALS_PATH
-
-    if not creds_path.exists():
-        # Verifica se há credenciais no Streamlit secrets ou env
-        import os
-        if not os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON"):
-            try:
-                import streamlit as st
-                if "GOOGLE_SHEETS_CREDENTIALS" not in st.secrets:
-                    errors.append(f"Credenciais do Google não encontradas em {creds_path}")
-            except:
-                errors.append(f"Credenciais do Google não encontradas em {creds_path}")
 
     return errors
 
@@ -199,7 +186,7 @@ def get_config_status() -> dict:
     return {
         'resend_api_key': bool(RESEND_API_KEY),
         'sender_email': bool(SENDER_EMAIL),
-        'google_sheets_id': bool(GOOGLE_SHEETS_SPREADSHEET_ID),
+        'database_url': bool(DATABASE_URL),
         'daily_limit': DAILY_EMAIL_LIMIT,
         'work_hours': f"{WORK_HOURS_START}h - {WORK_HOURS_END}h",
         'delay_mean': DELAY_MEAN,

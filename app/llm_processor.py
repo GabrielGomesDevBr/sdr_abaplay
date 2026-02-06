@@ -40,7 +40,8 @@ def get_llm():
     return ChatOpenAI(
         model=OPENAI_MODEL,
         api_key=OPENAI_API_KEY,
-        temperature=0.7
+        temperature=0.7,
+        request_timeout=90
     )
 
 
@@ -645,7 +646,7 @@ Responda REMOVER para sair da lista.
 # FUNÇÕES DE PROCESSAMENTO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 60) -> Dict:
+async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 120) -> Dict:
     """
     Processa leads usando LLM para análise contextual
 
@@ -694,16 +695,20 @@ async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 60
 
 
 def process_leads_with_llm_sync(leads_json: str, regiao: str) -> Dict:
-    """Versão síncrona do processamento de leads"""
+    """Versão síncrona do processamento de leads (compatível com Streamlit)"""
     import asyncio
-    
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
+    import concurrent.futures
+
+    def _run():
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(process_leads_with_llm(leads_json, regiao))
+        try:
+            return loop.run_until_complete(process_leads_with_llm(leads_json, regiao))
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run)
+        return future.result(timeout=150)  # margem sobre o timeout interno de 120s
 
 
 async def generate_email_for_enriched_lead(lead: dict, timeout: int = 30) -> dict:
@@ -827,16 +832,20 @@ async def generate_email_with_llm(lead: Dict, insights: str = "", timeout: int =
 
 
 def generate_email_with_llm_sync(lead: Dict, insights: str = "") -> Dict:
-    """Versão síncrona da geração de email"""
+    """Versão síncrona da geração de email (compatível com Streamlit)"""
     import asyncio
-    
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
+    import concurrent.futures
+
+    def _run():
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(generate_email_with_llm(lead, insights))
+        try:
+            return loop.run_until_complete(generate_email_with_llm(lead, insights))
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run)
+        return future.result(timeout=60)  # margem sobre o timeout interno de 30s
 
 
 async def generate_followup_email(lead: Dict, dor_primeiro_email: str, dias_desde_contato: int) -> Dict:
@@ -892,16 +901,20 @@ Responda REMOVER para sair da lista.
 
 
 def generate_followup_email_sync(lead: Dict, dor_primeiro_email: str, dias_desde_contato: int) -> Dict:
-    """Versão síncrona da geração de follow-up"""
+    """Versão síncrona da geração de follow-up (compatível com Streamlit)"""
     import asyncio
-    
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
+    import concurrent.futures
+
+    def _run():
         loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(generate_followup_email(lead, dor_primeiro_email, dias_desde_contato))
+        try:
+            return loop.run_until_complete(generate_followup_email(lead, dor_primeiro_email, dias_desde_contato))
+        finally:
+            loop.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run)
+        return future.result(timeout=60)
 
 
 def test_llm_connection() -> Tuple[bool, str]:

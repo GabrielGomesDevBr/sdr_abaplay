@@ -1,5 +1,5 @@
 """
-Módulo de visualização de dados da planilha Google Sheets.
+Módulo de visualização de dados do banco PostgreSQL.
 Fornece interface visual para consultar leads, emails e campanhas.
 """
 import streamlit as st
@@ -11,31 +11,21 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import get_worksheet, SHEET_COLUMNS
+from app.database import load_table_as_dataframe
 
 
 def load_data_as_df(sheet_name: str, fresh: bool = True) -> pd.DataFrame:
     """
-    Carrega dados de uma aba da planilha como DataFrame.
+    Carrega dados de uma tabela do banco como DataFrame.
 
     Args:
-        sheet_name: Nome da aba ('leads', 'email_log', 'campaigns', 'blacklist')
-        fresh: Se True, força refresh do cache
+        sheet_name: Nome da tabela ('leads', 'email_log', 'campaigns', 'blacklist')
+        fresh: Mantido para compatibilidade (ignorado com SQL)
 
     Returns:
         DataFrame com os dados
     """
-    ws = get_worksheet(sheet_name, fresh=fresh)
-    data = ws.get_all_values()
-
-    if len(data) <= 1:
-        return pd.DataFrame(columns=SHEET_COLUMNS.get(sheet_name, []))
-
-    headers = data[0]
-    rows = data[1:]
-
-    df = pd.DataFrame(rows, columns=headers)
-    return df
+    return load_table_as_dataframe(sheet_name)
 
 
 def render_kpi_cards(leads_df: pd.DataFrame, emails_df: pd.DataFrame, campaigns_df: pd.DataFrame):

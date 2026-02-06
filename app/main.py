@@ -14,7 +14,8 @@ from config.settings import DAILY_EMAIL_LIMIT, WORK_HOURS_START, WORK_HOURS_END
 from app.database import (
     init_database, create_campaign, update_campaign_stats,
     insert_lead, get_leads_by_campaign, get_email_log_by_campaign,
-    get_campaign, add_to_blacklist, get_blacklist, check_leads_for_duplicates
+    get_campaign, add_to_blacklist, get_blacklist, check_leads_for_duplicates,
+    get_setting, set_setting, update_lead_status
 )
 from app.lead_processor import (
     parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score
@@ -37,27 +38,22 @@ from app.ui_components import (
 )
 
 
-# === Persistência de Configurações ===
-CONFIG_FILE = Path(__file__).parent.parent / "data" / "user_config.json"
-
+# === Persistência de Configurações (via banco SQL) ===
 
 def load_user_config() -> dict:
-    """Carrega configurações do usuário do arquivo"""
+    """Carrega configurações do usuário do banco"""
     try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
+        limit = get_setting('daily_email_limit', str(DAILY_EMAIL_LIMIT))
+        return {"daily_limit": int(limit)}
     except Exception:
-        pass
-    return {"daily_limit": DAILY_EMAIL_LIMIT}
+        return {"daily_limit": DAILY_EMAIL_LIMIT}
 
 
 def save_user_config(config: dict):
-    """Salva configurações do usuário em arquivo"""
+    """Salva configurações do usuário no banco"""
     try:
-        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
+        if 'daily_limit' in config:
+            set_setting('daily_email_limit', str(config['daily_limit']))
     except Exception:
         pass
 
@@ -320,13 +316,15 @@ def render_lead_input():
                         region=metadata.get('regiao_buscada', 'N/A')
                     )
                     
-                    # Insere leads novos no banco
+                    # Insere leads novos no banco com status 'queued'
                     for lead in leads_novos:
                         lead['db_id'] = insert_lead(campaign_id, lead)
+                        update_lead_status(lead['db_id'], 'queued')
 
                     # Insere também leads descartados no banco (dados valiosos mesmo sem email)
                     for lead in discarded_leads:
                         lead['db_id'] = insert_lead(campaign_id, lead)
+                        update_lead_status(lead['db_id'], 'invalid', lead.get('discard_reason', ''))
 
                     # Atualiza session state
                     st.session_state.campaign_id = campaign_id
@@ -355,7 +353,7 @@ def render_lead_input():
                         [
                             f"🆕 {len(leads_novos)} leads novos prontos para envio",
                             f"⚠️ {len(leads_duplicados)} já contatados (aguardando aprovação)",
-                            f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos na planilha)",
+                            f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos no banco)",
                             "👉 Vá para a aba 'Fila de Envio' para continuar"
                         ],
                         "📊"
