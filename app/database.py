@@ -440,6 +440,126 @@ def get_blacklist() -> List[Dict]:
         return [_row_to_dict(row) for row in cur.fetchall()]
 
 
+def remove_from_blacklist(email: str) -> bool:
+    """Remove email da blacklist e invalida cache"""
+    if not email:
+        return False
+
+    invalidate_blacklist_cache()
+    try:
+        with get_cursor() as cur:
+            cur.execute("DELETE FROM blacklist WHERE LOWER(email) = %s", (email.lower(),))
+            return cur.rowcount > 0
+    except Exception:
+        return False
+
+
+def add_multiple_to_blacklist(emails: List[str], reason: str = "importacao_manual") -> int:
+    """
+    Adiciona múltiplos emails à blacklist.
+    
+    Args:
+        emails: Lista de emails para adicionar
+        reason: Motivo do bloqueio
+        
+    Returns:
+        Quantidade de emails adicionados (ignora duplicados)
+    """
+    if not emails:
+        return 0
+
+    invalidate_blacklist_cache()
+    added = 0
+    
+    for email in emails:
+        email = email.strip().lower()
+        if not email or is_blacklisted(email):
+            continue
+        
+        try:
+            with get_cursor() as cur:
+                cur.execute("""
+                    INSERT INTO blacklist (id, email, reason, added_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (email) DO NOTHING
+                """, (_generate_id(), email, reason))
+                if cur.rowcount > 0:
+                    added += 1
+        except Exception:
+            pass
+    
+    return added
+
+
+def get_all_sent_emails(
+    limit: int = 50,
+    offset: int = 0,
+    status: str = None,
+    campaign_id: str = None,
+    date_from: str = None,
+    date_to: str = None
+) -> tuple:
+    """
+    Retorna emails enviados com paginação e filtros.
+    
+    Args:
+        limit: Máximo de registros por página
+        offset: Deslocamento para paginação
+        status: Filtrar por status ('sent', 'failed', 'pending')
+        campaign_id: Filtrar por campanha
+        date_from: Data inicial (ISO format)
+        date_to: Data final (ISO format)
+        
+    Returns:
+        Tuple (lista_de_emails, total_count)
+    """
+    conditions = []
+    params = []
+    
+    if status:
+        conditions.append("el.status = %s")
+        params.append(status)
+    
+    if campaign_id:
+        conditions.append("el.campaign_id = %s")
+        params.append(campaign_id)
+    
+    if date_from:
+        conditions.append("el.sent_at >= %s")
+        params.append(date_from)
+    
+    if date_to:
+        conditions.append("el.sent_at <= %s")
+        params.append(date_to)
+    
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    
+    # Conta total
+    with get_cursor() as cur:
+        cur.execute(f"""
+            SELECT COUNT(*) as cnt FROM email_log el
+            {where_clause}
+        """, params)
+        total = cur.fetchone()['cnt']
+    
+    # Busca página
+    with get_cursor() as cur:
+        cur.execute(f"""
+            SELECT el.*, 
+                   COALESCE(l.nome_clinica, '') as nome_clinica,
+                   COALESCE(c.name, '') as campaign_name
+            FROM email_log el
+            LEFT JOIN leads l ON el.lead_id = l.id
+            LEFT JOIN campaigns c ON el.campaign_id = c.id
+            {where_clause}
+            ORDER BY el.created_at DESC
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        emails = [_row_to_dict(row) for row in cur.fetchall()]
+    
+    return emails, total
+
+
 # === Duplicate/Recent Email Detection ===
 
 def check_email_sent_recently(email: str, days: int = 180) -> Optional[Dict]:

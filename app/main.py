@@ -15,7 +15,8 @@ from app.database import (
     init_database, create_campaign, update_campaign_stats,
     insert_lead, get_leads_by_campaign, get_email_log_by_campaign,
     get_campaign, add_to_blacklist, get_blacklist, check_leads_for_duplicates,
-    get_setting, set_setting, update_lead_status
+    get_setting, set_setting, update_lead_status, remove_from_blacklist,
+    add_multiple_to_blacklist
 )
 from app.lead_processor import (
     parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score
@@ -32,6 +33,7 @@ from app.llm_processor import (
 )
 from app.data_viewer import render_data_viewer
 from app.gemini_prospector import prospect_leads, test_gemini_connection
+from app.email_history import render_email_history
 from app.ui_components import (
     inject_custom_css, render_header, render_metric_card, render_lead_card,
     render_progress_tracker, render_empty_state, render_success_message,
@@ -196,18 +198,53 @@ def render_settings_tab():
         blacklist = get_blacklist()
         st.markdown(f"**{len(blacklist)}** emails bloqueados")
 
-        # Adicionar à blacklist
-        new_blacklist = st.text_input("Adicionar email à blacklist", placeholder="email@exemplo.com")
+        # Adicionar à blacklist com motivo
+        st.markdown("#### ➕ Adicionar Email")
+        add_col1, add_col2 = st.columns([2, 1])
+        with add_col1:
+            new_blacklist = st.text_input("Email", placeholder="email@exemplo.com", key="new_blacklist_email")
+        with add_col2:
+            reason = st.text_input("Motivo", value="manual", key="blacklist_reason")
+        
         if st.button("➕ Adicionar à Blacklist", type="primary") and new_blacklist:
-            add_to_blacklist(new_blacklist)
+            add_to_blacklist(new_blacklist, reason)
             st.success(f"✅ {new_blacklist} adicionado à blacklist")
             st.rerun()
 
-        # Lista de blacklist
-        with st.expander(f"Ver todos os {len(blacklist)} emails bloqueados"):
+        st.divider()
+
+        # Importação em lote
+        st.markdown("#### 📥 Importar em Lote")
+        bulk_emails = st.text_area(
+            "Colar múltiplos emails (um por linha)",
+            placeholder="email1@exemplo.com\nemail2@exemplo.com\nemail3@exemplo.com",
+            height=100,
+            key="bulk_blacklist"
+        )
+        bulk_reason = st.text_input("Motivo para todos", value="importacao_manual", key="bulk_reason")
+        
+        if st.button("📥 Importar Todos", type="secondary") and bulk_emails:
+            emails_list = [e.strip() for e in bulk_emails.strip().split('\n') if e.strip()]
+            if emails_list:
+                added = add_multiple_to_blacklist(emails_list, bulk_reason)
+                st.success(f"✅ {added} emails adicionados à blacklist (de {len(emails_list)} informados)")
+                st.rerun()
+
+        st.divider()
+
+        # Lista de blacklist com opção de remoção
+        st.markdown("#### 📋 Emails Bloqueados")
+        with st.expander(f"Ver todos os {len(blacklist)} emails", expanded=False):
             if blacklist:
                 for item in blacklist:
-                    st.markdown(f"• `{item['email']}`")
+                    item_col1, item_col2 = st.columns([4, 1])
+                    with item_col1:
+                        st.markdown(f"• `{item['email']}` — _{item.get('reason', 'N/A')}_")
+                    with item_col2:
+                        if st.button("🗑️", key=f"rm_{item['email']}", help="Remover da blacklist"):
+                            if remove_from_blacklist(item['email']):
+                                st.success(f"✅ {item['email']} removido")
+                                st.rerun()
             else:
                 st.info("Nenhum email na blacklist")
 
@@ -820,9 +857,10 @@ def main():
     render_status_panel()
 
     # Área principal com tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📋 Nova Campanha",
         "📊 Fila de Envio",
+        "📧 Emails Enviados",
         "📈 Dados",
         "📜 Histórico",
         "⚙️ Configurações"
@@ -838,9 +876,12 @@ def main():
         render_discarded_leads()
 
     with tab3:
-        render_data_viewer()
+        render_email_history()
 
     with tab4:
+        render_data_viewer()
+
+    with tab5:
         st.markdown("## 📜 Histórico de Campanhas")
         if st.session_state.campaign_id:
             campaign = get_campaign(st.session_state.campaign_id)
@@ -856,7 +897,7 @@ def main():
         else:
             st.info("Nenhuma campanha ativa")
 
-    with tab5:
+    with tab6:
         render_settings_tab()
 
 
