@@ -86,56 +86,43 @@ SCORE_HAS_WEBSITE = 10
 # === Email Templates ===
 TEMPLATES = {
     'decisor_identificado': {
-        'assunto': '{nome_decisor}, como {nome_clinica} pode economizar 15h/semana em PEI',
+        'assunto': '{nome_decisor}, relatórios às 22h na {nome_clinica}?',
         'corpo': '''
-Olá {nome_decisor},
+Oi {nome_decisor},
 
-Vi que você lidera a {nome_clinica} em {cidade}. 
+Sei que quem lidera uma clínica ABA em {cidade} conhece bem a rotina: terapeutas terminando relatórios em casa, PEI que consome o fim de semana, e a sensação de que a burocracia está roubando tempo das crianças.
 
-Sei que relatórios de evolução e PEI consomem tempo precioso da sua equipe. O ABAplay automatiza essa documentação:
+Construímos o ABAplay porque somos analistas do comportamento — cansados de softwares feitos por quem nunca aplicou sessão no chão. Hoje, clínicas nos dizem que recuperaram as noites.
 
-✅ PEI escolar gerado em 5 minutos (100% LBI/BNCC)
-✅ Relatórios de evolução com 1 clique
-✅ Documentação "blindada" contra glosas de convênio
-
-Clínicas ABA perdem em média 5-8% da receita por glosas. Posso mostrar como evitar isso em 15 minutos?
-
-Ofereço 7 dias grátis para você testar com sua equipe.
+Posso te mostrar em 15 minutos?
 
 ---
 Gabriel Gomes
-Engenheiro de Software | ABAplay
+ABAplay | Gestão para Clínicas ABA
 (11) 98854-3437
-https://abaplay.app.br/info
+abaplay.app.br/info
 
-Se não deseja receber mais emails, responda com "REMOVER".
+Responda REMOVER para sair da lista.
         '''
     },
     'sem_decisor': {
-        'assunto': '{nome_clinica}: reduzir glosas em até 8% com documentação padronizada',
+        'assunto': '{nome_clinica}: quanto tempo sua equipe perde com burocracia?',
         'corpo': '''
-Olá equipe {nome_clinica},
+Oi, equipe {nome_clinica}!
 
-Clínicas ABA perdem em média 5-8% da receita por glosas de convênio. Documentação inadequada é a principal causa.
+Clínicas ABA vivem um paradoxo: quanto mais pacientes atendem, mais tempo perdem com relatórios, PEI e documentação — e menos tempo sobra para as crianças.
 
-O ABAplay resolve isso com:
+Somos analistas do comportamento que construíram o ABAplay justamente para devolver esse tempo. Clínicas que usam nos dizem que recuperaram noites e fins de semana.
 
-✅ +2.400 programas ABA baseados em evidências
-✅ PEI escolar gerado em 5 minutos
-✅ Relatórios padronizados que auditores adoram
-✅ Portal para pais acompanharem em tempo real
-
-Podemos agendar 15 minutos para eu mostrar como funciona?
-
-Oferecemos 7 dias grátis, sem cartão de crédito.
+Posso mostrar como funciona em 15 minutos?
 
 ---
 Gabriel Gomes
-Engenheiro de Software | ABAplay
+ABAplay | Gestão para Clínicas ABA
 (11) 98854-3437
-https://abaplay.app.br/info
+abaplay.app.br/info
 
-Se não deseja receber mais emails, responda com "REMOVER".
+Responda REMOVER para sair da lista.
         '''
     }
 }
