@@ -50,21 +50,8 @@ def is_within_work_hours() -> Tuple[bool, str]:
     Returns:
         Tuple[is_valid, message]
     """
-    now = datetime.now()
-    
-    # Verifica dia da semana (0=Monday, 6=Sunday)
-    if now.weekday() not in WORK_DAYS:
-        return False, f"Fora do horário: hoje é {now.strftime('%A')} (apenas dias úteis)"
-    
-    # Verifica hora
-    current_hour = now.hour
-    if current_hour < WORK_HOURS_START:
-        return False, f"Muito cedo: aguardando até {WORK_HOURS_START}:00"
-    
-    if current_hour >= WORK_HOURS_END:
-        return False, f"Fora do expediente: retorna amanhã às {WORK_HOURS_START}:00"
-    
-    return True, "Dentro do horário comercial"
+    # Limitação de horário removida conforme solicitação
+    return True, "Horário livre (restrição desativada)"
 
 
 def can_send_email(daily_limit: int = DAILY_EMAIL_LIMIT) -> Tuple[bool, str]:
@@ -144,30 +131,5 @@ def format_delay_for_display(delay_seconds: float) -> str:
 
 def get_next_available_time() -> datetime:
     """Retorna próximo horário disponível para envio"""
-    now = datetime.now()
-    
-    # Se dentro do horário, retorna agora
-    within_hours, _ = is_within_work_hours()
-    if within_hours:
-        return now
-    
-    # Se for dia útil mas fora do horário
-    if now.weekday() in WORK_DAYS:
-        if now.hour < WORK_HOURS_START:
-            # Ainda não começou o expediente
-            return now.replace(hour=WORK_HOURS_START, minute=0, second=0, microsecond=0)
-        else:
-            # Já passou o expediente, próximo dia útil
-            pass
-    
-    # Encontra próximo dia útil
-    days_ahead = 1
-    next_day = now
-    while days_ahead <= 7:
-        next_day = now.replace(hour=WORK_HOURS_START, minute=0, second=0, microsecond=0)
-        next_day = next_day.replace(day=now.day + days_ahead)
-        if next_day.weekday() in WORK_DAYS:
-            return next_day
-        days_ahead += 1
-    
-    return now  # Fallback
+    # Como não há mais restrição de horário, o próximo horário é agora
+    return datetime.now()
