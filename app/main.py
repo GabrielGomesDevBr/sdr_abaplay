@@ -442,9 +442,9 @@ def render_lead_input():
             quantity = st.slider(
                 "Quantidade",
                 min_value=1,
-                max_value=10,
+                max_value=20,
                 value=5,
-                help="Número de leads para buscar (1-10)"
+                help="Número de leads para buscar (1-20)"
             )
 
         with col_model:

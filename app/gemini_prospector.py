@@ -54,7 +54,7 @@ NÃO execute nenhuma busca sem um **[LOCAL]** específico fornecido pelo usuári
 ### 2. Limite de Resultados
 
 - **Padrão:** 5 leads por execução
-- **Máximo permitido:** 10 (apenas se solicitado explicitamente)
+- **Máximo permitido:** 20 (apenas se solicitado explicitamente)
 
 **Comportamento ao atingir limite:**
 1. Pare imediatamente a coleta
@@ -254,7 +254,7 @@ def prospect_leads(city: str, quantity: int = 5, model: str = None) -> Tuple[boo
 
     Args:
         city: Cidade/região para buscar
-        quantity: Número de leads (1-10)
+        quantity: Número de leads (1-20)
         model: Modelo Gemini a usar (None = padrão do .env)
 
     Returns:
