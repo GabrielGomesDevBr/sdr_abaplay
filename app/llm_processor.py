@@ -648,7 +648,7 @@ Responda REMOVER para sair da lista.
 # FUNÇÕES DE PROCESSAMENTO
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 120) -> Dict:
+async def process_leads_with_llm(leads_json: str, regiao: str, timeout: int = 240) -> Dict:
     """
     Processa leads usando LLM para análise contextual
 
@@ -710,7 +710,7 @@ def process_leads_with_llm_sync(leads_json: str, regiao: str) -> Dict:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(_run)
-        return future.result(timeout=150)  # margem sobre o timeout interno de 120s
+        return future.result(timeout=270)  # margem sobre o timeout interno de 240s
 
 
 async def generate_email_for_enriched_lead(lead: dict, timeout: int = 30) -> dict:
