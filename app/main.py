@@ -16,7 +16,7 @@ from app.database import (
     insert_lead, get_leads_by_campaign, get_email_log_by_campaign,
     get_campaign, add_to_blacklist, get_blacklist, check_leads_for_duplicates,
     get_setting, set_setting, update_lead_status, remove_from_blacklist,
-    add_multiple_to_blacklist
+    add_multiple_to_blacklist, get_campaign_summary
 )
 from app.lead_processor import (
     parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score
@@ -522,7 +522,7 @@ def render_lead_input():
 
 
 def render_lead_queue():
-    """Renderiza fila de leads para envio"""
+    """Renderiza fila de leads para envio com ações em massa"""
     if not st.session_state.valid_leads:
         render_empty_state("Nenhum lead na fila. Cole um JSON de leads na aba 'Nova Campanha'.", "📭")
         return
@@ -561,6 +561,50 @@ def render_lead_queue():
             steps=[f"Lead {i+1}" for i in range(min(total, 5))] + (["..."] if total > 5 else [])
         )
 
+    # === AÇÕES EM MASSA ===
+    pending_leads = [l for i, l in enumerate(st.session_state.valid_leads) if i >= st.session_state.current_lead_index]
+    if pending_leads and not st.session_state.sending_active:
+        st.markdown("### ⚡ Ações em Massa")
+        bulk_cols = st.columns(4)
+        
+        with bulk_cols[0]:
+            # Inicializa estado de seleção se necessário
+            if 'selected_leads' not in st.session_state:
+                st.session_state.selected_leads = set(range(st.session_state.current_lead_index, total))
+            
+            if st.button("☑️ Selecionar Todos", use_container_width=True):
+                st.session_state.selected_leads = set(range(st.session_state.current_lead_index, total))
+                st.rerun()
+        
+        with bulk_cols[1]:
+            if st.button("⬜ Desmarcar Todos", use_container_width=True):
+                st.session_state.selected_leads = set()
+                st.rerun()
+        
+        with bulk_cols[2]:
+            n_selected = len(st.session_state.get('selected_leads', set()))
+            st.markdown(f"**{n_selected}** leads selecionados")
+        
+        with bulk_cols[3]:
+            if st.button("🗑️ Descartar Desmarcados", use_container_width=True, type="secondary"):
+                selected = st.session_state.get('selected_leads', set())
+                new_valid = []
+                for i, lead in enumerate(st.session_state.valid_leads):
+                    if i < st.session_state.current_lead_index or i in selected:
+                        new_valid.append(lead)
+                    else:
+                        lead['discard_reason'] = 'Removido manualmente da fila'
+                        st.session_state.discarded_leads.append(lead)
+                        if lead.get('db_id'):
+                            update_lead_status(lead['db_id'], 'invalid', 'Removido manualmente da fila')
+                removed = total - len(new_valid)
+                st.session_state.valid_leads = new_valid
+                st.session_state.selected_leads = set(range(st.session_state.current_lead_index, len(new_valid)))
+                st.success(f"🗑️ {removed} leads removidos da fila")
+                st.rerun()
+        
+        st.divider()
+
     # Lista de leads com cards estilizados
     st.markdown("### 📋 Leads Ordenados por Score")
 
@@ -573,13 +617,16 @@ def render_lead_queue():
         else:
             status_text = "pending"
 
-        # Adiciona status ao lead para exibição
-        lead_display = lead.copy()
-        lead_display['_status'] = status_text
-        lead_display['_index'] = i + 1
+        # Checkbox de seleção + card
+        col_check, col_status, col_card = st.columns([0.4, 0.4, 9.2])
 
-        # Card do lead
-        col_status, col_card = st.columns([0.5, 9.5])
+        with col_check:
+            if i >= st.session_state.current_lead_index and not st.session_state.sending_active:
+                is_selected = i in st.session_state.get('selected_leads', set())
+                if st.checkbox("", value=is_selected, key=f"sel_{i}", label_visibility="collapsed"):
+                    st.session_state.setdefault('selected_leads', set()).add(i)
+                else:
+                    st.session_state.setdefault('selected_leads', set()).discard(i)
 
         with col_status:
             if i < st.session_state.current_lead_index:
@@ -883,19 +930,75 @@ def main():
 
     with tab5:
         st.markdown("## 📜 Histórico de Campanhas")
-        if st.session_state.campaign_id:
-            campaign = get_campaign(st.session_state.campaign_id)
-            if campaign:
-                st.json(campaign)
+        st.caption("Todas as campanhas realizadas com estatísticas detalhadas")
 
-            logs = get_email_log_by_campaign(st.session_state.campaign_id)
-            if logs:
-                st.markdown("### 📧 Log de Emails")
-                for log in logs:
-                    status_emoji = "✅" if log['status'] == 'sent' else "❌"
-                    st.markdown(f"{status_emoji} **{log.get('nome_clinica')}** - {log['email_to']} - {log['status']}")
+        all_campaigns = get_campaign_summary()
+
+        if not all_campaigns:
+            st.info("Nenhuma campanha encontrada. Crie uma nova na aba 'Nova Campanha'.")
         else:
-            st.info("Nenhuma campanha ativa")
+            # Métricas globais
+            total_camp = len(all_campaigns)
+            total_leads_all = sum(int(c.get('total_leads', 0) or 0) for c in all_campaigns)
+            total_sent_all = sum(int(c.get('actual_sent', 0) or 0) for c in all_campaigns)
+
+            gcol1, gcol2, gcol3 = st.columns(3)
+            gcol1.metric("🎯 Total de Campanhas", total_camp)
+            gcol2.metric("👥 Total de Leads (todas)", total_leads_all)
+            gcol3.metric("✉️ Total de Emails Enviados", total_sent_all)
+
+            st.divider()
+
+            for camp in all_campaigns:
+                camp_name = camp.get('name', 'Sem nome')
+                camp_region = camp.get('region', 'N/A')
+                camp_status = camp.get('status', 'N/A')
+                camp_total = int(camp.get('total_leads', 0) or 0)
+                camp_sent = int(camp.get('actual_sent', 0) or 0)
+                camp_failed = int(camp.get('emails_failed', 0) or 0)
+                camp_created = camp.get('created_at', '')
+
+                # Formata data
+                try:
+                    if isinstance(camp_created, str) and camp_created:
+                        dt = datetime.fromisoformat(camp_created.replace('Z', '+00:00')) if camp_created else None
+                    else:
+                        dt = camp_created
+                    camp_date_display = dt.strftime('%d/%m/%Y %H:%M') if dt else 'N/A'
+                except Exception:
+                    camp_date_display = str(camp_created)[:16]
+
+                taxa = (camp_sent / camp_total * 100) if camp_total > 0 else 0
+                status_color = '✅' if camp_status == 'completed' else '🟡' if camp_status == 'active' else '⏸️'
+
+                with st.container():
+                    hcol1, hcol2, hcol3, hcol4, hcol5 = st.columns([3, 1, 1, 1, 1])
+                    
+                    with hcol1:
+                        st.markdown(f"{status_color} **{camp_name}**")
+                        st.caption(f"📍 {camp_region} • 📅 {camp_date_display}")
+                    with hcol2:
+                        st.metric("Leads", camp_total)
+                    with hcol3:
+                        st.metric("Enviados", camp_sent)
+                    with hcol4:
+                        st.metric("Falhas", camp_failed)
+                    with hcol5:
+                        st.metric("Taxa", f"{taxa:.0f}%")
+
+                    # Detalhes expandíveis da campanha
+                    with st.expander(f"📧 Ver log de emails — {camp_name}"):
+                        camp_id = camp.get('id')
+                        if camp_id:
+                            logs = get_email_log_by_campaign(camp_id)
+                            if logs:
+                                for log in logs:
+                                    log_emoji = '✅' if log['status'] == 'sent' else '❌'
+                                    st.markdown(f"{log_emoji} **{log.get('nome_clinica', 'N/A')}** — {log['email_to']} — {log['status']}")
+                            else:
+                                st.caption("Nenhum email registrado nesta campanha.")
+
+                    st.divider()
 
     with tab6:
         render_settings_tab()
