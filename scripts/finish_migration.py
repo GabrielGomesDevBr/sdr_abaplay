@@ -7,8 +7,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 import sys
 
-NEON_URL = "postgresql://neondb_owner:NEON_PASSWORD_REDACTED@ep-dawn-firefly-a83lnrqc-pooler.eastus2.azure.neon.tech/neondb?sslmode=require"
-RENDER_URL = "postgresql://abaplay_postgres_db_user:RENDER_PASSWORD_REDACTED@dpg-d07n3madbo4c73ehoiqg-a.oregon-postgres.render.com/abaplay_postgres_db"
+import os
+NEON_URL = os.environ["NEON_DATABASE_URL"]
+RENDER_URL = os.environ["RENDER_DATABASE_URL"]
 
 def migrate_email_log(neon_cur, render_cur):
     neon_cur.execute("SELECT id, lead_id, campaign_id, email_to, subject, body_html, status, attempt_number, resend_id, error_message, sent_at, created_at FROM email_log")

@@ -7,7 +7,8 @@ from psycopg2.extras import RealDictCursor
 import json
 import sys
 
-NEON_URL = "postgresql://neondb_owner:NEON_PASSWORD_REDACTED@ep-dawn-firefly-a83lnrqc-pooler.eastus2.azure.neon.tech/neondb?sslmode=require"
+import os
+NEON_URL = os.environ["NEON_DATABASE_URL"]
 
 def escape_sql(val):
     """Escapa valor para SQL"""
