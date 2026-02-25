@@ -535,13 +535,14 @@ def render_lead_queue():
     pending = total - sent
     discarded = len(st.session_state.discarded_leads)
     remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
+    sent_today = st.session_state.daily_limit - remaining_today
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         render_metric_card(str(pending), "Na Fila", "📋", "primary")
     with col2:
-        render_metric_card(str(sent), "Enviados", "✅", "success")
+        render_metric_card(str(sent_today), "Enviados Hoje", "✅", "success")
     with col3:
         render_metric_card(str(discarded), "Descartados", "❌", "error")
     with col4:
@@ -890,7 +891,7 @@ def main():
     # Header com estatísticas
     remaining_today = get_remaining_emails_today(st.session_state.daily_limit)
     header_stats = {
-        "Enviados Hoje": st.session_state.emails_sent_session,
+        "Enviados Hoje": st.session_state.daily_limit - remaining_today,
         "Restantes": remaining_today,
         "Limite": st.session_state.daily_limit
     }
