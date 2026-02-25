@@ -36,6 +36,8 @@ def get_connection():
     if _connection is None or _connection.closed:
         _connection = psycopg2.connect(DATABASE_URL)
         _connection.autocommit = True
+        with _connection.cursor() as cur:
+            cur.execute("SET search_path TO sdr")
     return _connection
 
 
