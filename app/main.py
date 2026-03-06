@@ -22,7 +22,7 @@ from app.lead_processor import (
     parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score,
     get_lead_email
 )
-from app.email_validator import validate_email_smtp
+from app.email_validator import validate_email_smtp, get_reoon_credits
 from app.delay_manager import (
     get_smart_delay, can_send_email, get_remaining_emails_today,
     estimate_completion_time, format_delay_for_display, is_within_work_hours
@@ -41,6 +41,12 @@ from app.ui_components import (
     render_progress_tracker, render_empty_state, render_success_message,
     render_info_box, render_status_bar, render_compact_metric
 )
+
+
+@st.cache_data(ttl=300)
+def _get_reoon_credits_cached():
+    """Cache de 5 min para não chamar a API a cada rerender."""
+    return get_reoon_credits()
 
 
 # === Persistência de Configurações (via banco SQL) ===
@@ -117,6 +123,8 @@ def render_status_panel():
     gemini_ok, _ = test_gemini_connection()
     within_hours, _ = is_within_work_hours()
     remaining = get_remaining_emails_today(st.session_state.daily_limit)
+    reoon_credits, _ = _get_reoon_credits_cached()
+    reoon_label = f"Reoon: {reoon_credits} cr" if reoon_credits >= 0 else "Reoon: N/D"
 
     # Barra de status
     render_status_bar([
@@ -125,6 +133,7 @@ def render_status_panel():
         {"label": "Gemini", "status": gemini_ok},
         {"label": f"Horário ({WORK_HOURS_START}h-{WORK_HOURS_END}h)", "status": within_hours},
         {"label": f"Emails: {remaining}/{st.session_state.daily_limit}", "status": remaining > 0},
+        {"label": reoon_label, "status": reoon_credits > 0},
     ])
 
 
@@ -193,6 +202,22 @@ def render_settings_tab():
             st.success(f"✅ Horário: {hours_msg}")
         else:
             st.warning(f"⏳ Horário: {hours_msg}")
+
+        st.divider()
+
+        # Status Reoon
+        st.markdown("### 🔍 Validação de E-mails (Reoon)")
+        from config.settings import REOON_API_KEY as _reoon_key
+        reoon_credits_now, reoon_err_now = get_reoon_credits()
+        if _reoon_key:
+            if reoon_credits_now >= 0:
+                cor = "success" if reoon_credits_now > 5 else "warning" if reoon_credits_now > 0 else "error"
+                render_compact_metric(str(reoon_credits_now), "Créditos restantes hoje", "🔍", cor)
+                st.caption("20 créditos/dia no plano gratuito — reservados para domínios corporativos")
+            else:
+                st.warning(f"⚠️ Reoon: {reoon_err_now}")
+        else:
+            st.warning("⚠️ REOON_API_KEY não configurada")
 
     with col2:
         st.markdown("### 🚫 Blacklist")
@@ -399,6 +424,22 @@ def _process_leads_json(json_input: str):
             total_leads=len(leads_novos) + len(discarded_leads)
         )
 
+        # Calcula stats de verificação SMTP para o resumo
+        all_smtp_leads = valid_leads + [l for l in discarded_leads if l.get('smtp_status')]
+        smtp_counts = {
+            'valid':      sum(1 for l in all_smtp_leads if l.get('smtp_status') == 'valid'),
+            'invalid':    sum(1 for l in all_smtp_leads if l.get('smtp_status') == 'invalid'),
+            'disposable': sum(1 for l in all_smtp_leads if l.get('smtp_status') == 'disposable'),
+            'catch_all':  sum(1 for l in all_smtp_leads if l.get('smtp_status') == 'catch_all'),
+            'unknown':    sum(1 for l in all_smtp_leads if l.get('smtp_status') == 'unknown'),
+        }
+        smtp_line = (
+            f"🔍 SMTP: {smtp_counts['valid']} verificados ✓  |  "
+            f"{smtp_counts['invalid'] + smtp_counts['disposable']} rejeitados ✗  |  "
+            f"{smtp_counts['catch_all']} catch-all  |  "
+            f"{smtp_counts['unknown']} não verificados"
+        )
+
         # Mensagem clara de conclusão
         st.balloons()
         render_success_message(
@@ -411,6 +452,7 @@ def _process_leads_json(json_input: str):
                 f"🆕 {len(leads_novos)} leads novos prontos para envio",
                 f"⚠️ {len(leads_duplicados)} já contatados (aguardando aprovação)",
                 f"❌ {len(discarded_leads)} descartados (sem email válido, mas salvos no banco)",
+                smtp_line,
                 "👉 Vá para a aba 'Fila de Envio' para continuar"
             ],
             "📊"

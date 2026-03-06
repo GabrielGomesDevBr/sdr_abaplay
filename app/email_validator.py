@@ -133,3 +133,28 @@ def validate_email_smtp(email: str) -> Tuple[bool, str, str]:
     except Exception as e:
         log_error("email_validator", f"Reoon verify error: {email} — {e}", e)
         return True, 'unknown', f'Erro na verificação: {str(e)}'
+
+
+def get_reoon_credits() -> Tuple[int, str]:
+    """
+    Retorna os créditos restantes na conta Reoon.
+
+    Returns:
+        Tuple[credits, error_message]
+        - credits: número de créditos restantes, ou -1 em caso de erro
+        - error_message: descrição do erro (vazia se OK)
+    """
+    if not REOON_API_KEY:
+        return -1, "API key não configurada"
+    try:
+        response = requests.get(
+            "https://emailverifier.reoon.com/api/v1/get-credits",
+            params={"key": REOON_API_KEY},
+            timeout=5
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return int(data.get("credits", 0)), ""
+        return -1, f"Erro HTTP {response.status_code}"
+    except Exception as e:
+        return -1, str(e)
