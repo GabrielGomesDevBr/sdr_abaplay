@@ -8,14 +8,22 @@ Pré-filtros locais (sem custo) eliminam domínios descartáveis e catch-all ant
 de consumir créditos da API, reservando-os para e-mails corporativos.
 """
 import requests
-from typing import Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from typing import Dict, List, Tuple
 
 from config.settings import REOON_API_KEY
 from app.logger import log_info, log_warning, log_error
 
 
-# Timeout em segundos para chamada da Reoon API
-REOON_TIMEOUT = 10
+# Timeout por chamada individual à Reoon API
+REOON_TIMEOUT = 7
+
+# Timeout total para verificação de um lote de e-mails
+REOON_BATCH_TIMEOUT = 60
+
+# Workers paralelos para verificação em lote (3 = seguro para plano gratuito)
+REOON_MAX_WORKERS = 3
 
 # Domínios conhecidos que são catch-all ou não respondem com precisão
 CATCH_ALL_DOMAINS = {
@@ -133,6 +141,48 @@ def validate_email_smtp(email: str) -> Tuple[bool, str, str]:
     except Exception as e:
         log_error("email_validator", f"Reoon verify error: {email} — {e}", e)
         return True, 'unknown', f'Erro na verificação: {str(e)}'
+
+
+def validate_email_smtp_batch(
+    emails: List[str],
+    max_workers: int = REOON_MAX_WORKERS,
+    total_timeout: int = REOON_BATCH_TIMEOUT,
+) -> Dict[str, Tuple[bool, str, str]]:
+    """
+    Verifica uma lista de e-mails em paralelo via Reoon API.
+
+    Args:
+        emails: Lista de endereços de e-mail a verificar
+        max_workers: Número de verificações simultâneas
+        total_timeout: Timeout total do lote em segundos
+
+    Returns:
+        Dict[email, Tuple[is_valid, status, message]]
+        E-mails não verificados dentro do timeout retornam (True, 'unknown', ...)
+    """
+    results: Dict[str, Tuple[bool, str, str]] = {}
+
+    if not emails:
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(validate_email_smtp, email): email for email in emails}
+        try:
+            for future in as_completed(futures, timeout=total_timeout):
+                email = futures[future]
+                try:
+                    results[email] = future.result()
+                except Exception as e:
+                    results[email] = (True, 'unknown', f'Erro: {str(e)}')
+        except FuturesTimeoutError:
+            # Timeout total do lote — emails restantes passam como unknown
+            for future, email in futures.items():
+                if email not in results:
+                    future.cancel()
+                    results[email] = (True, 'unknown', 'Timeout no lote de verificação')
+            log_warning("email_validator", f"Batch timeout: {len(emails) - len(results)} emails não verificados")
+
+    return results
 
 
 def get_reoon_credits() -> Tuple[int, str]:

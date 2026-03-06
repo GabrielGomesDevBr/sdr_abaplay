@@ -22,7 +22,7 @@ from app.lead_processor import (
     parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score,
     get_lead_email
 )
-from app.email_validator import validate_email_smtp, get_reoon_credits
+from app.email_validator import validate_email_smtp, validate_email_smtp_batch, get_reoon_credits
 from app.delay_manager import (
     get_smart_delay, can_send_email, get_remaining_emails_today,
     estimate_completion_time, format_delay_for_display, is_within_work_hours
@@ -357,24 +357,35 @@ def _process_leads_json(json_input: str):
 
                 st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados (total: {len(leads)})")
 
-                # === VERIFICAÇÃO SMTP (para leads do caminho LLM) ===
-                with st.spinner("🔍 Verificando existência dos e-mails via SMTP..."):
+                # === VERIFICAÇÃO SMTP em paralelo (para leads do caminho LLM) ===
+                with st.spinner("🔍 Verificando e-mails em paralelo via Reoon..."):
+                    emails_com_email = [l for l in valid_leads if get_lead_email(l)]
+                    emails_sem_email = [l for l in valid_leads if not get_lead_email(l)]
+
+                    # Batch paralelo — todos de uma vez, timeout total de 60s
+                    smtp_results = validate_email_smtp_batch(
+                        [get_lead_email(l) for l in emails_com_email]
+                    )
+
                     smtp_verified = []
-                    for lead in valid_leads:
+                    for lead in emails_com_email:
                         email = get_lead_email(lead)
-                        if email:
-                            smtp_valid, smtp_status, smtp_message = validate_email_smtp(email)
-                            lead['smtp_valid'] = smtp_valid
-                            lead['smtp_status'] = smtp_status
-                            lead['smtp_message'] = smtp_message
-                            if smtp_valid:
-                                smtp_verified.append(lead)
-                            else:
-                                lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
-                                discarded_leads.append(lead)
+                        smtp_valid, smtp_status, smtp_message = smtp_results.get(
+                            email, (True, 'unknown', 'Não verificado')
+                        )
+                        lead['smtp_valid'] = smtp_valid
+                        lead['smtp_status'] = smtp_status
+                        lead['smtp_message'] = smtp_message
+                        if smtp_valid:
+                            smtp_verified.append(lead)
                         else:
-                            lead['discard_reason'] = 'Sem e-mail'
+                            lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
                             discarded_leads.append(lead)
+
+                    for lead in emails_sem_email:
+                        lead['discard_reason'] = 'Sem e-mail'
+                        discarded_leads.append(lead)
+
                     valid_leads = smtp_verified
 
                 if any(not l.get('smtp_valid', True) for l in discarded_leads):

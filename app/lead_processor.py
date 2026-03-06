@@ -20,7 +20,7 @@ from config.settings import (
     SCORE_DECISOR_IDENTIFIED, SCORE_HAS_WEBSITE
 )
 from app.database import is_blacklisted
-from app.email_validator import validate_email_smtp
+from app.email_validator import validate_email_smtp_batch
 
 
 def validate_email_syntax(email: str) -> bool:
@@ -127,11 +127,13 @@ def process_leads(leads: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """
     valid_leads = []
     discarded_leads = []
-    
+    pending_smtp = []  # leads que passaram MX e aguardam verificação SMTP
+
+    # Fase 1: score + validação MX (rápido, sem API externa)
     for lead in leads:
         score = calculate_lead_score(lead)
         lead['score'] = score
-        
+
         if score == -1:
             lead['discard_reason'] = 'Email na blacklist'
             discarded_leads.append(lead)
@@ -139,32 +141,40 @@ def process_leads(leads: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
             lead['discard_reason'] = 'Sem email válido'
             discarded_leads.append(lead)
         else:
-            # Validação MX adicional
             email = lead.get('contatos', {}).get('email_principal')
             mx_valid, mx_message = validate_email_mx(email)
             lead['mx_valid'] = mx_valid
             lead['mx_message'] = mx_message
-            
+
             if not mx_valid:
                 lead['discard_reason'] = f'MX inválido: {mx_message}'
                 discarded_leads.append(lead)
             else:
-                # === VERIFICAÇÃO SMTP (e-mail existe de fato?) ===
-                smtp_valid, smtp_status, smtp_message = validate_email_smtp(email)
-                lead['smtp_valid'] = smtp_valid
-                lead['smtp_status'] = smtp_status
-                lead['smtp_message'] = smtp_message
+                pending_smtp.append(lead)
 
-                if not smtp_valid:
-                    # E-mail rejeitado pelo servidor ou descartável
-                    lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
-                    discarded_leads.append(lead)
-                else:
-                    valid_leads.append(lead)
-    
+    # Fase 2: verificação SMTP em paralelo (todos os leads elegíveis de uma vez)
+    if pending_smtp:
+        emails = [l.get('contatos', {}).get('email_principal') for l in pending_smtp]
+        smtp_results = validate_email_smtp_batch(emails)
+
+        for lead in pending_smtp:
+            email = lead.get('contatos', {}).get('email_principal')
+            smtp_valid, smtp_status, smtp_message = smtp_results.get(
+                email, (True, 'unknown', 'Não verificado')
+            )
+            lead['smtp_valid'] = smtp_valid
+            lead['smtp_status'] = smtp_status
+            lead['smtp_message'] = smtp_message
+
+            if not smtp_valid:
+                lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
+                discarded_leads.append(lead)
+            else:
+                valid_leads.append(lead)
+
     # Ordena válidos por score (maior primeiro)
     valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)
-    
+
     return valid_leads, discarded_leads
 
 
