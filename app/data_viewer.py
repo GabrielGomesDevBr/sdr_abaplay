@@ -135,7 +135,7 @@ def _render_aggrid_table(df: pd.DataFrame, key: str, height: int = 400, selectio
     Fallback para st.dataframe se AgGrid não estiver disponível.
     """
     if not AGGRID_AVAILABLE or df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True, height=height)
+        st.dataframe(df, width="stretch", hide_index=True, height=height)
         return None
 
     gb = GridOptionsBuilder.from_dataframe(df)
@@ -387,7 +387,7 @@ def render_charts(leads_df: pd.DataFrame, emails_df: pd.DataFrame):
             fig.update_layout(**PLOTLY_LAYOUT, height=350, showlegend=False)
             fig.update_traces(marker_line_width=0)
             fig.update_coloraxes(showscale=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("Sem dados de região para exibir")
 
@@ -419,7 +419,7 @@ def render_charts(leads_df: pd.DataFrame, emails_df: pd.DataFrame):
                         line_color=PLOTLY_COLORS['primary'],
                         line_width=2,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 else:
                     st.info("Sem emails nos últimos 30 dias")
             else:
@@ -453,7 +453,7 @@ def render_charts(leads_df: pd.DataFrame, emails_df: pd.DataFrame):
                 height=350,
                 annotations=[dict(text=str(len(emails_df)), x=0.5, y=0.5, font_size=28, font_weight='bold', showarrow=False)],
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with col4:
         # Gráfico de confiança dos leads (donut)
@@ -478,7 +478,7 @@ def render_charts(leads_df: pd.DataFrame, emails_df: pd.DataFrame):
                 height=350,
                 annotations=[dict(text=str(len(leads_df)), x=0.5, y=0.5, font_size=28, font_weight='bold', showarrow=False)],
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def render_blacklist_table():

@@ -13,7 +13,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Dict, List, Tuple
 
 from config.settings import REOON_API_KEY
-from app.logger import log_info, log_warning, log_error
+from app.logger import log_warning, log_error
 
 
 # Timeout por chamada individual à Reoon API
@@ -90,7 +90,6 @@ def validate_email_smtp(email: str) -> Tuple[bool, str, str]:
 
     # 2. Verifica domínios catch-all conhecidos (gratuito, sem créditos)
     if is_catch_all_domain(email):
-        log_info("email_validator", f"Catch-all domain, skipping API verify: {email}")
         return True, 'catch_all', f'Domínio catch-all ({domain}) — não verificável'
 
     # 3. Sem API key configurada — passa sem verificar
@@ -100,7 +99,6 @@ def validate_email_smtp(email: str) -> Tuple[bool, str, str]:
 
     # 4. Verificação via Reoon API (consome 1 crédito)
     try:
-        log_info("email_validator", f"Reoon verify: {email}")
         response = requests.get(
             "https://emailverifier.reoon.com/api/v1/verify",
             params={"email": email, "key": REOON_API_KEY, "mode": "quick"},
@@ -108,38 +106,36 @@ def validate_email_smtp(email: str) -> Tuple[bool, str, str]:
         )
 
         if response.status_code == 429:
-            log_warning("email_validator", f"Reoon daily limit reached, passing: {email}")
+            log_warning("email_validator", f"Reoon: limite diário atingido para {email}")
             return True, 'unknown', 'Limite diário de verificações atingido'
 
         if response.status_code != 200:
-            log_warning("email_validator", f"Reoon API error {response.status_code}: {email}")
+            log_warning("email_validator", f"Reoon: HTTP {response.status_code} para {email}")
             return True, 'unknown', f'Erro na API de verificação ({response.status_code})'
 
         data = response.json()
         status = data.get("status", "unknown")
 
         if status == "valid":
-            log_info("email_validator", f"Reoon verified OK: {email}")
             return True, 'valid', 'E-mail verificado ✓ (Reoon)'
         elif status == "invalid":
-            log_warning("email_validator", f"Reoon rejected: {email}")
+            log_warning("email_validator", f"Reoon: e-mail inválido — {email}")
             return False, 'invalid', 'E-mail rejeitado — caixa não existe'
         elif status == "disposable":
-            log_warning("email_validator", f"Reoon disposable: {email}")
+            log_warning("email_validator", f"Reoon: domínio descartável — {email}")
             return False, 'disposable', f'Domínio descartável ({domain})'
         elif status == "accept_all":
-            log_info("email_validator", f"Reoon catch-all: {email}")
             return True, 'catch_all', f'Domínio catch-all ({domain}) — não verificável'
         else:
-            log_warning("email_validator", f"Reoon unknown status '{status}': {email}")
+            log_warning("email_validator", f"Reoon: status inconclusivo '{status}' — {email}")
             return True, 'unknown', f'Status de verificação inconclusivo ({status})'
 
     except requests.Timeout:
-        log_warning("email_validator", f"Reoon timeout: {email}")
+        log_warning("email_validator", f"Reoon: timeout na verificação de {email}")
         return True, 'unknown', 'Timeout na verificação de e-mail'
 
     except Exception as e:
-        log_error("email_validator", f"Reoon verify error: {email} — {e}", e)
+        log_error("email_validator", f"Reoon: erro ao verificar {email}", e)
         return True, 'unknown', f'Erro na verificação: {str(e)}'
 
 
@@ -176,11 +172,16 @@ def validate_email_smtp_batch(
                     results[email] = (True, 'unknown', f'Erro: {str(e)}')
         except FuturesTimeoutError:
             # Timeout total do lote — emails restantes passam como unknown
+            n_missing = 0
             for future, email in futures.items():
                 if email not in results:
                     future.cancel()
                     results[email] = (True, 'unknown', 'Timeout no lote de verificação')
-            log_warning("email_validator", f"Batch timeout: {len(emails) - len(results)} emails não verificados")
+                    n_missing += 1
+            log_warning(
+                "email_validator",
+                f"Reoon batch: timeout — {n_missing} email(s) não verificados passaram como unknown"
+            )
 
     return results
 

@@ -542,7 +542,7 @@ def render_lead_input():
         col_search, col_clear = st.columns(2)
 
         with col_search:
-            if st.button("🔎 Buscar Leads", type="primary", disabled=not city, use_container_width=True):
+            if st.button("🔎 Buscar Leads", type="primary", disabled=not city, width="stretch"):
                 with st.spinner(f"Buscando {quantity} clínicas ABA em {city}... (pode levar até 2 minutos)"):
                     success, json_str, error = prospect_leads(city, quantity, model=selected_model)
 
@@ -555,7 +555,7 @@ def render_lead_input():
                     st.error(f"Erro na busca: {error}")
 
         with col_clear:
-            if st.button("🗑️ Limpar", use_container_width=True):
+            if st.button("🗑️ Limpar", width="stretch"):
                 _clear_session()
 
         # Textarea com resultado do Gemini (editável)
@@ -576,7 +576,7 @@ def render_lead_input():
 
         # Botão processar
         button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
-        if st.button(button_label, type="primary", use_container_width=True, key="process_gemini"):
+        if st.button(button_label, type="primary", width="stretch", key="process_gemini"):
             _process_leads_json(gemini_json)
 
     else:
@@ -591,14 +591,14 @@ def render_lead_input():
 
         with col1:
             button_label = "🧠 Processar com IA" if st.session_state.use_llm else "🔄 Processar Leads"
-            if st.button(button_label, type="primary", use_container_width=True, key="process_manual"):
+            if st.button(button_label, type="primary", width="stretch", key="process_manual"):
                 if json_input:
                     _process_leads_json(json_input)
                 else:
                     st.warning("⚠️ Cole o JSON de leads primeiro")
 
         with col2:
-            if st.button("🗑️ Limpar", use_container_width=True, key="clear_manual"):
+            if st.button("🗑️ Limpar", width="stretch", key="clear_manual"):
                 _clear_session()
 
 
@@ -654,12 +654,12 @@ def render_lead_queue():
             if 'selected_leads' not in st.session_state:
                 st.session_state.selected_leads = set(range(st.session_state.current_lead_index, total))
             
-            if st.button("☑️ Selecionar Todos", use_container_width=True):
+            if st.button("☑️ Selecionar Todos", width="stretch"):
                 st.session_state.selected_leads = set(range(st.session_state.current_lead_index, total))
                 st.rerun()
         
         with bulk_cols[1]:
-            if st.button("⬜ Desmarcar Todos", use_container_width=True):
+            if st.button("⬜ Desmarcar Todos", width="stretch"):
                 st.session_state.selected_leads = set()
                 st.rerun()
         
@@ -668,7 +668,7 @@ def render_lead_queue():
             st.markdown(f"**{n_selected}** leads selecionados")
         
         with bulk_cols[3]:
-            if st.button("🗑️ Descartar Desmarcados", use_container_width=True, type="secondary"):
+            if st.button("🗑️ Descartar Desmarcados", width="stretch", type="secondary"):
                 selected = st.session_state.get('selected_leads', set())
                 new_valid = []
                 for i, lead in enumerate(st.session_state.valid_leads):

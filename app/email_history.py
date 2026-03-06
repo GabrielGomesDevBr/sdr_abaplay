@@ -157,7 +157,7 @@ def render_email_history():
             key="email_history_grid",
         )
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True, height=450)
+        st.dataframe(df, width="stretch", hide_index=True, height=450)
 
     # === Expanders para ver email completo ===
     with st.expander("👁️ Ver corpo de um email"):

@@ -74,6 +74,8 @@ llm_logger = setup_logger("abaplay.llm", log_to_console=False)
 gemini_logger = setup_logger("abaplay.gemini", log_to_console=False)
 ui_logger = setup_logger("abaplay.ui", log_to_console=False)
 
+email_validator_logger = setup_logger("abaplay.email_validator", log_to_console=False)
+
 
 def log_error(module: str, message: str, exception: Optional[Exception] = None):
     """
@@ -89,7 +91,8 @@ def log_error(module: str, message: str, exception: Optional[Exception] = None):
         "email": email_logger,
         "llm": llm_logger,
         "gemini": gemini_logger,
-        "ui": ui_logger
+        "ui": ui_logger,
+        "email_validator": email_validator_logger,
     }.get(module, logger)
 
     if exception:
@@ -105,7 +108,8 @@ def log_warning(module: str, message: str):
         "email": email_logger,
         "llm": llm_logger,
         "gemini": gemini_logger,
-        "ui": ui_logger
+        "ui": ui_logger,
+        "email_validator": email_validator_logger,
     }.get(module, logger)
 
     module_logger.warning(message)
@@ -118,7 +122,8 @@ def log_info(module: str, message: str):
         "email": email_logger,
         "llm": llm_logger,
         "gemini": gemini_logger,
-        "ui": ui_logger
+        "ui": ui_logger,
+        "email_validator": email_validator_logger,
     }.get(module, logger)
 
     module_logger.info(message)
