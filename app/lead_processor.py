@@ -20,6 +20,7 @@ from config.settings import (
     SCORE_DECISOR_IDENTIFIED, SCORE_HAS_WEBSITE
 )
 from app.database import is_blacklisted
+from app.email_validator import validate_email_smtp
 
 
 def validate_email_syntax(email: str) -> bool:
@@ -148,7 +149,18 @@ def process_leads(leads: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
                 lead['discard_reason'] = f'MX inválido: {mx_message}'
                 discarded_leads.append(lead)
             else:
-                valid_leads.append(lead)
+                # === VERIFICAÇÃO SMTP (e-mail existe de fato?) ===
+                smtp_valid, smtp_status, smtp_message = validate_email_smtp(email)
+                lead['smtp_valid'] = smtp_valid
+                lead['smtp_status'] = smtp_status
+                lead['smtp_message'] = smtp_message
+
+                if not smtp_valid:
+                    # E-mail rejeitado pelo servidor ou descartável
+                    lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
+                    discarded_leads.append(lead)
+                else:
+                    valid_leads.append(lead)
     
     # Ordena válidos por score (maior primeiro)
     valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)

@@ -24,6 +24,7 @@ def _get_secret(key: str, default: str = "") -> str:
 RESEND_API_KEY = _get_secret("RESEND_API_KEY", "")
 SENDER_EMAIL = _get_secret("SENDER_EMAIL", "")
 SENDER_NAME = _get_secret("SENDER_NAME", "ABAplay")
+REOON_API_KEY = _get_secret("REOON_API_KEY", "")
 
 # === Email Limits ===
 DAILY_EMAIL_LIMIT = 20  # Limite padrão para envios diários

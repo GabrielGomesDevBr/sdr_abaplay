@@ -19,8 +19,10 @@ from app.database import (
     add_multiple_to_blacklist, get_campaign_summary
 )
 from app.lead_processor import (
-    parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score
+    parse_leads_json, process_leads, get_lead_display_info, calculate_lead_score,
+    get_lead_email
 )
+from app.email_validator import validate_email_smtp
 from app.delay_manager import (
     get_smart_delay, can_send_email, get_remaining_emails_today,
     estimate_completion_time, format_delay_for_display, is_within_work_hours
@@ -329,8 +331,34 @@ def _process_leads_json(json_input: str):
                 valid_leads.sort(key=lambda x: x.get('score', 0), reverse=True)
 
                 st.success(f"🧠 IA processou: {len(valid_leads)} válidos, {len(discarded_leads)} descartados (total: {len(leads)})")
+
+                # === VERIFICAÇÃO SMTP (para leads do caminho LLM) ===
+                with st.spinner("🔍 Verificando existência dos e-mails via SMTP..."):
+                    smtp_verified = []
+                    for lead in valid_leads:
+                        email = get_lead_email(lead)
+                        if email:
+                            smtp_valid, smtp_status, smtp_message = validate_email_smtp(email)
+                            lead['smtp_valid'] = smtp_valid
+                            lead['smtp_status'] = smtp_status
+                            lead['smtp_message'] = smtp_message
+                            if smtp_valid:
+                                smtp_verified.append(lead)
+                            else:
+                                lead['discard_reason'] = f'E-mail inválido: {smtp_message}'
+                                discarded_leads.append(lead)
+                        else:
+                            lead['discard_reason'] = 'Sem e-mail'
+                            discarded_leads.append(lead)
+                    valid_leads = smtp_verified
+
+                if any(not l.get('smtp_valid', True) for l in discarded_leads):
+                    smtp_rejections = sum(1 for l in discarded_leads if l.get('smtp_status') == 'invalid' or l.get('smtp_status') == 'disposable')
+                    if smtp_rejections > 0:
+                        st.warning(f"🔍 Verificação SMTP: {smtp_rejections} e-mail(s) rejeitado(s) por não existirem")
+
         else:
-            # Processamento padrão
+            # Processamento padrão (já inclui validação SMTP dentro de process_leads)
             valid_leads, discarded_leads = process_leads(leads)
 
         # === VERIFICAÇÃO DE DUPLICATAS (180 dias) ===

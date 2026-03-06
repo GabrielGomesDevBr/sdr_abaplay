@@ -713,6 +713,16 @@ def render_lead_card(lead: Dict, show_details: bool = True):
     confianca_colors = {"alta": "#48bb78", "media": "#ecc94b", "baixa": "#fc8181"}
     confianca_bg = confianca_colors.get(confianca.lower() if confianca else "media", "#ecc94b")
 
+    # Badge de verificação SMTP
+    smtp_status = lead.get('smtp_status', '')
+    smtp_badge = ''
+    if smtp_status == 'valid':
+        smtp_badge = '<span style="background:#38a169;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;" title="E-mail verificado via SMTP">✓ SMTP</span>'
+    elif smtp_status == 'catch_all':
+        smtp_badge = '<span style="background:#dd6b20;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;" title="Domínio catch-all, não verificável">⚠ CATCH-ALL</span>'
+    elif smtp_status == 'unknown':
+        smtp_badge = '<span style="background:#a0aec0;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;" title="Não foi possível verificar">? N/V</span>'
+
     # Container do card
     with st.container():
         # Header com nome e badges
@@ -728,6 +738,8 @@ def render_lead_card(lead: Dict, show_details: bool = True):
                 f'<span style="background:{score_color};color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">{score}</span>'
                 f'<span style="background:{confianca_bg};color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;">{(confianca or "media").upper()}</span>'
             )
+            if smtp_badge:
+                badges_html += smtp_badge
             if tom:
                 badges_html += f'<span style="background:#e2e8f0;color:#4a5568;padding:2px 8px;border-radius:12px;font-size:11px;">{tom}</span>'
             badges_html += '</div>'
